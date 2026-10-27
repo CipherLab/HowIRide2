@@ -30,6 +30,8 @@ export default function App() {
 
   useEffect(() => {
     live.start()
+    // Debugging hook: inspect playback from devtools (transitLive.playbackTime(), transitLive.behindBy()).
+    ;(window as unknown as { transitLive?: LiveVehicles }).transitLive = live
     return () => live.stop()
   }, [live])
 

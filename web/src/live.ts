@@ -12,9 +12,26 @@ const DEAD_RECKON_S = 15
 
 const MAX_SAMPLES = 8
 
+/**
+ * The feed's lag swings 19-38 s between updates depending on which buses just reported. Re-anchoring the clock
+ * to each reading made the whole map jump back ~10 s; instead the delay follows the worst lag of this window...
+ */
+const LAG_WINDOW_S = 120
+
+/** ...and the clock drifts toward it by running at most this much faster or slower than real time, never backwards. */
+const MAX_RATE_CHANGE = 0.2
+
+/**
+ * Lag readings above this aren't live data (e.g. the API replaying its warm-up after a restart); one such reading
+ * once held the map 35 minutes behind for the whole window.
+ */
+const MAX_LIVE_LAG_S = 300
+
 interface Track {
   vehicle: Vehicle
   samples: { t: number; d: number }[]
+  /** Furthest distance drawn so far; a bus never moves backwards on screen, it waits for the data to catch up. */
+  shown: number
 }
 
 export interface Placed {
@@ -31,8 +48,11 @@ export class LiveVehicles {
   /** Seconds to add to the local clock to get server time. */
   private offset = 0
   private newestPing = 0
-  /** Server time minus the newest ping, measured when each snapshot arrives; the feed's own delay. */
-  private lag = 0
+  /** (server time, server time minus newest ping) per snapshot, over the last LAG_WINDOW_S. */
+  private lags: { at: number; lag: number }[] = []
+  /** Playback clock in server seconds, and the local time it was last advanced. */
+  private clock = 0
+  private clockAt = 0
   private source: EventSource | null = null
   private listeners = new Set<() => void>()
   connected = false
@@ -67,7 +87,7 @@ export class LiveVehicles {
       seen.add(v.id)
       let track = this.tracks.get(v.id)
       if (!track || track.vehicle.tripId !== v.tripId) {
-        track = { vehicle: v, samples: [] }
+        track = { vehicle: v, samples: [], shown: -Infinity }
         this.tracks.set(v.id, track)
       }
       track.vehicle = v
@@ -80,7 +100,9 @@ export class LiveVehicles {
       if (v.shapeId && !this.shapes.has(v.shapeId)) this.loadShape(v.shapeId)
     }
     for (const id of this.tracks.keys()) if (!seen.has(id)) this.tracks.delete(id)
-    if (this.newestPing > 0) this.lag = Math.max(0, snapshot.serverTime - this.newestPing)
+    const lag = snapshot.serverTime - this.newestPing
+    if (this.newestPing > 0 && lag >= 0 && lag <= MAX_LIVE_LAG_S) this.lags.push({ at: snapshot.serverTime, lag })
+    while (this.lags.length > 0 && this.lags[0].at < snapshot.serverTime - LAG_WINDOW_S) this.lags.shift()
     this.connected = true
     this.listeners.forEach((fn) => fn())
   }
@@ -102,14 +124,32 @@ export class LiveVehicles {
     return this.tracks.size
   }
 
-  /** The playback clock in server seconds: real time, minus the feed's delay, minus a small buffer. */
+  /** How far behind real time playback aims to be: the worst recent feed lag plus a buffer. */
+  private targetDelay() {
+    return Math.max(0, ...this.lags.map((l) => l.lag)) + PLAYBACK_DELAY_S
+  }
+
+  /**
+   * The playback clock in server seconds. Monotonic: it runs at 0.8-1.2x real speed to converge on
+   * "now minus targetDelay", and only snaps when far off (first data, or the tab was asleep).
+   */
   playbackTime() {
-    return Date.now() / 1000 + this.offset - this.lag - PLAYBACK_DELAY_S
+    const local = Date.now() / 1000
+    const target = local + this.offset - this.targetDelay()
+    if (this.clockAt === 0 || Math.abs(target - this.clock) > 60) {
+      this.clock = target
+    } else {
+      const elapsed = local - this.clockAt
+      const rate = 1 + Math.max(-MAX_RATE_CHANGE, Math.min(MAX_RATE_CHANGE, (target - this.clock) / 10))
+      this.clock += elapsed * rate
+    }
+    this.clockAt = local
+    return this.clock
   }
 
   /** How far behind real time the map is showing, in seconds. */
   behindBy() {
-    return this.lag + PLAYBACK_DELAY_S
+    return this.clockAt === 0 ? this.targetDelay() : Date.now() / 1000 + this.offset - this.clock
   }
 
   vehicle(id: string) {
@@ -122,7 +162,11 @@ export class LiveVehicles {
     const out: Placed[] = []
     for (const track of this.tracks.values()) {
       const shape = this.shape(track.vehicle.shapeId)
-      const d = shape ? distanceAt(track.samples, t) : null
+      let d = shape ? distanceAt(track.samples, t) : null
+      if (d != null) {
+        d = Math.max(d, track.shown)
+        track.shown = d
+      }
       if (shape && d != null) {
         const p = pointAt(shape, d)
         out.push({ vehicle: track.vehicle, lon: p.lon, lat: p.lat, bearing: p.bearing })
