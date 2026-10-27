@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using Transit.Crossings;
 using Transit.Gtfs;
 
@@ -6,39 +5,16 @@ namespace Transit.Tests;
 
 public sealed class CrossingDetectorTests : IDisposable
 {
-    const double Lat = 45.0;
-    const double LonStep = 0.001; // ~78.6 m at this latitude
+    const double Lat = TestGtfs.Lat;
+    const double LonStep = TestGtfs.LonStep;
     static readonly DateTimeOffset T0 = new(2026, 10, 27, 14, 0, 0, TimeSpan.Zero);
 
     readonly string _dir = Directory.CreateTempSubdirectory("gtfs-").FullName;
     readonly StaticFeed _feed;
 
-    public CrossingDetectorTests() => _feed = StaticFeed.Load(WriteFeed());
+    public CrossingDetectorTests() => _feed = StaticFeed.Load(TestGtfs.Write(Path.Combine(_dir, "gtfs.zip")));
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
-
-    /// <summary>One east-west shape of 11 points; stops at points 0, 2 and 10 (B to C is 629 m, long enough for one synthetic); trips T1 and T2 share it.</summary>
-    string WriteFeed()
-    {
-        var path = Path.Combine(_dir, "gtfs.zip");
-        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
-        void Table(string name, IEnumerable<string> lines)
-        {
-            using var w = new StreamWriter(zip.CreateEntry(name).Open());
-            foreach (var line in lines) w.WriteLine(line);
-        }
-
-        double Lon(int i) => -93.0 + i * LonStep;
-        double Dist(int i) => i * 78.6;
-        Table("shapes.txt", ["shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled",
-            .. Enumerable.Range(0, 11).Select(i => $"S1,{Lat},{Lon(i)},{i + 1},{Dist(i):F1}")]);
-        Table("stops.txt", ["stop_id,stop_name,stop_lat,stop_lon",
-            $"A,\"West End, Farside\",{Lat},{Lon(0)}", $"B,Middle,{Lat},{Lon(2)}", $"C,East,{Lat},{Lon(10)}"]);
-        Table("trips.txt", ["route_id,service_id,trip_id,direction_id,shape_id", "R,1,T1,0,S1", "R,1,T2,0,S1"]);
-        Table("stop_times.txt", ["trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled",
-            .. new[] { "T1", "T2" }.SelectMany(t => new[] { $"{t},08:00:00,08:00:00,A,1,0", $"{t},08:05:00,08:05:00,B,2,{Dist(2):F1}", $"{t},08:10:00,08:10:00,C,3,{Dist(10):F1}" })]);
-        return path;
-    }
 
     static VehiclePing Ping(string? trip, double seconds, int point) =>
         new("V1", trip, "20261027", T0.AddSeconds(seconds), Lat, -93.0 + point * LonStep, null);

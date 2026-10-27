@@ -107,7 +107,7 @@ public sealed class RealtimePoller : BackgroundService
         _fetchTime += elapsed;
         if (elapsed > _slowestFetch) _slowestFetch = elapsed;
 
-        var headerTs = FeedHeader.ReadTimestamp(bytes)
+        var headerTs = FeedHeaderReader.ReadTimestamp(bytes)
             ?? throw new InvalidDataException($"{bytes.Length} byte response is not a GTFS-rt FeedMessage");
         if (headerTs != 0 && headerTs == _lastHeaderTimestamp)
         {

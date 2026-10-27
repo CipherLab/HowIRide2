@@ -21,7 +21,8 @@ public sealed record StopCrossing(
     DateTimeOffset? Depart,
     double? ArriveGapSeconds,
     double? DepartGapSeconds,
-    bool Detour);
+    bool Detour,
+    TripInfo Trip);
 
 public sealed record PingTrace(TripTracker Tracker, DateTimeOffset Time, double? LastDist, double WindowMin, double WindowMax, LineMatch? Windowed, LineMatch? Nearest);
 
@@ -216,7 +217,7 @@ public sealed class TripTracker
     void Emit(Checkpoint cp, DateTimeOffset? departAt, double? departGap, bool detour, List<StopCrossing> output)
     {
         output.Add(new StopCrossing(ServiceDate, _trip.TripId, _trip.RouteId, _trip.DirectionId, VehicleId, cp,
-            _arriveAt, departAt, _arriveGap, departGap, _arriveDetour || detour));
+            _arriveAt, departAt, _arriveGap, departGap, _arriveDetour || detour, _trip));
         _committed = true; // also covers a departure from a zone the tracker started inside
         _next++;
         (_arrived, _arriveAt, _arriveGap, _arriveDetour) = (false, null, null, false);

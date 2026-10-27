@@ -25,13 +25,13 @@ public sealed class FeedHeaderTests
     [InlineData(false)]
     [InlineData(true)]
     public void ReadsHeaderTimestamp(bool timestampFirst) =>
-        Assert.Equal(1761580800UL, FeedHeader.ReadTimestamp(Message(1761580800, timestampFirst)));
+        Assert.Equal(1761580800UL, FeedHeaderReader.ReadTimestamp(Message(1761580800, timestampFirst)));
 
     [Fact]
     public void ReturnsNullForNonProtobufPayload() =>
-        Assert.Null(FeedHeader.ReadTimestamp("<html>503</html>"u8));
+        Assert.Null(FeedHeaderReader.ReadTimestamp("<html>503</html>"u8));
 
     [Fact]
     public void ReturnsNullForTruncatedMessage() =>
-        Assert.Null(FeedHeader.ReadTimestamp(Message(1761580800).AsSpan(0, 6)));
+        Assert.Null(FeedHeaderReader.ReadTimestamp(Message(1761580800).AsSpan(0, 6)));
 }

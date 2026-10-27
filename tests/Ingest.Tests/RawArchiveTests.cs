@@ -87,6 +87,25 @@ public sealed class RawArchiveTests : IDisposable
     }
 
     [Fact]
+    public void ReopeningAfterCrashCutsTornRecordBeforeAppending()
+    {
+        var t0 = new DateTimeOffset(2026, 10, 27, 3, 10, 0, TimeSpan.Zero);
+        var path = RawArchiveWriter.PathFor(Path.Combine(_root, "feed"), t0.UtcDateTime.Date.AddHours(3));
+        using (var writer = new RawArchiveWriter(_root, "feed", _ => { }))
+        {
+            writer.Append(t0, [1, 2]);
+            writer.Append(t0.AddSeconds(5), [3, 4, 5, 6]);
+        }
+        using (var f = new FileStream(path, FileMode.Open))
+            f.SetLength(f.Length - 2);
+
+        using (var writer = new RawArchiveWriter(_root, "feed", _ => { }))
+            writer.Append(t0.AddSeconds(10), [7]);
+
+        Assert.Equal([[1, 2], [7]], RawArchiveReader.Read(path).Select(r => r.Payload));
+    }
+
+    [Fact]
     public void FindUncompressedSkipsCurrentHour()
     {
         var now = new DateTimeOffset(2026, 10, 27, 15, 20, 0, TimeSpan.Zero);

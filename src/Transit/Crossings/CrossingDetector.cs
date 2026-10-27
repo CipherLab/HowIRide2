@@ -22,8 +22,10 @@ public sealed class DetectorStats
 /// Routes pings to a <see cref="TripTracker"/> per vehicle, starting a new tracker whenever the
 /// vehicle's trip changes (the handoff at the end of each trip on a block).
 /// </summary>
-public sealed class CrossingDetector(StaticFeed feed)
+public sealed class CrossingDetector(Func<string, ResolvedTrip?> resolveTrip)
 {
+    public CrossingDetector(StaticFeed feed) : this(feed.Resolve) { }
+
     /// <summary>Pings older than this when fetched are dropped; the feed's normal lag is ~40 s.</summary>
     public static readonly TimeSpan MaxPingAge = TimeSpan.FromSeconds(120);
 
@@ -54,7 +56,7 @@ public sealed class CrossingDetector(StaticFeed feed)
             Stats.Stale++;
             return _buffer;
         }
-        if (!feed.Trips.TryGetValue(ping.TripId, out var trip))
+        if (resolveTrip(ping.TripId) is not var (trip, projection))
         {
             Stats.UnknownTrip++;
             return _buffer;
@@ -76,7 +78,7 @@ public sealed class CrossingDetector(StaticFeed feed)
 
         Stats.Used++;
         var (offBefore, preBefore, ambBefore, lostBefore) = (tracker.OffRoutePings, tracker.PreStartOffRoutePings, tracker.AmbiguousPings, tracker.LostPings);
-        var (x, y) = feed.Projection.Project(ping.Lat, ping.Lon);
+        var (x, y) = projection.Project(ping.Lat, ping.Lon);
         tracker.OnPing(ping.Timestamp, x, y, ping.CurrentStopSequence, _buffer);
         var (off, pre) = (tracker.OffRoutePings - offBefore, tracker.PreStartOffRoutePings - preBefore);
         Stats.OffRoute += off;

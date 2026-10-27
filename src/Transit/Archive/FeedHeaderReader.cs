@@ -4,7 +4,7 @@ namespace Transit.Archive;
 /// Reads FeedMessage.header.timestamp straight from protobuf wire format, which is all ingest needs
 /// to dedupe snapshots. Full GTFS-rt parsing belongs to the crossing detector, not the recorder.
 /// </summary>
-public static class FeedHeader
+public static class FeedHeaderReader
 {
     const int FeedMessageHeaderField = 1;
     const int FeedHeaderTimestampField = 3;

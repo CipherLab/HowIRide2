@@ -58,6 +58,27 @@ Metro Transit returns sporadic 404s while regenerating feeds; the poller logs th
    Each stop has a ±30 m zone: entering it is arrival, leaving it is departure, the difference is dwell.
    Segment travel is departure from one zone to arrival at the next.
 
+### Live: the `detect` service
+
+`docker compose up -d` runs `detect` next to `ingest`.
+It follows the VehiclePositions archive (closed hours, then the live file), runs the same detection, and writes `derived/crossings.db` (SQLite, WAL, safe to read while it runs).
+It mounts `data/` read-only, so nothing it does can affect the recording.
+
+- **Resume:** a cursor is stored with each snapshot's rows in one transaction. On restart it replays the previous 90 minutes without writing, so trips already under way keep their tracking state.
+- **Static GTFS:** the newest `gtfs.zip` and `next/gtfs.zip` are both loaded and checked hourly, so trips from an upcoming pick resolve as soon as it's published.
+- **Rebuild:** delete `derived/crossings.db` and restart; it re-derives everything from the archive.
+
+Segment travel times, the raw material for the v0 model:
+
+```sql
+SELECT c.prev_checkpoint_id, c.checkpoint_id, c.arrive - p.depart AS seconds
+FROM crossings c JOIN crossings p
+  ON p.service_date = c.service_date AND p.trip_id = c.trip_id AND p.checkpoint_index = c.checkpoint_index - 1
+WHERE c.detour = 0 AND c.arrive IS NOT NULL AND p.depart IS NOT NULL;
+```
+
+### Offline: replay to CSV
+
 Replay recorded hours into a CSV:
 
 ```sh

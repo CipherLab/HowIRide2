@@ -8,7 +8,8 @@ namespace Transit.Archive;
 /// Append-only archive of raw feed snapshots, one file per feed per UTC hour:
 /// {root}/{feed}/{yyyy-MM-dd}/{HH}.pbs while open, {HH}.pbs.zst once the hour closes.
 /// Each record is [int64 BE fetched-at unix ms][int32 BE length][payload bytes].
-/// A crash can leave a torn final record; <see cref="RawArchiveReader"/> stops cleanly at it.
+/// A crash can leave a torn final record. Readers stop cleanly at it, and the writer cuts it off
+/// before appending to that file again so later records stay aligned.
 /// </summary>
 public sealed class RawArchiveWriter : IDisposable
 {
@@ -16,7 +17,7 @@ public sealed class RawArchiveWriter : IDisposable
     public const string ClosedExtension = ".pbs.zst";
     const int CompressionLevel = 19;
     const int WindowLog = 27; // 128 MB: spans many ~1 MB snapshots so each compresses as a diff of the last
-    const int HeaderSize = 12;
+    public const int HeaderSize = 12;
 
     readonly string _feedDir;
     readonly Action<string> _onFileClosed;
@@ -55,8 +56,28 @@ public sealed class RawArchiveWriter : IDisposable
         CloseCurrent();
         var path = PathFor(_feedDir, hour);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        TruncateTornTail(path);
         _current = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         _currentHour = hour;
+    }
+
+    /// <summary>Cuts a partially written final record left by a crash, so the next append starts on a record boundary.</summary>
+    public static void TruncateTornTail(string path)
+    {
+        if (!File.Exists(path)) return;
+        using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        Span<byte> header = stackalloc byte[HeaderSize];
+        long end = 0;
+        while (end + HeaderSize <= file.Length)
+        {
+            file.Position = end;
+            file.ReadExactly(header);
+            var next = end + HeaderSize + BinaryPrimitives.ReadInt32BigEndian(header[8..]);
+            if (next > file.Length) break;
+            end = next;
+        }
+        if (end < file.Length)
+            file.SetLength(end);
     }
 
     void CloseCurrent()
@@ -121,19 +142,27 @@ public static class RawArchiveReader
     /// <summary>Reads records from a .pbs or .pbs.zst file, stopping silently at a torn trailing record.</summary>
     public static IEnumerable<RawRecord> Read(string path)
     {
-        using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using Stream stream = path.EndsWith(".zst", StringComparison.Ordinal) ? OpenZstd(file) : file;
-        var header = new byte[12];
-        while (true)
-        {
-            if (stream.ReadAtLeast(header, header.Length, throwOnEndOfStream: false) < header.Length)
-                yield break;
-            var fetchedAt = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64BigEndian(header));
-            var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(8));
-            var payload = new byte[length];
-            if (stream.ReadAtLeast(payload, length, throwOnEndOfStream: false) < length)
-                yield break;
-            yield return new RawRecord(fetchedAt, payload);
-        }
+        var header = new byte[RawArchiveWriter.HeaderSize];
+        while (TryRead(stream, header) is { } record)
+            yield return record;
     }
+
+    /// <summary>Reads the next whole record, or returns null at end of data or a partial record (stream position is then undefined).</summary>
+    public static RawRecord? TryRead(Stream stream, byte[] header)
+    {
+        if (stream.ReadAtLeast(header, RawArchiveWriter.HeaderSize, throwOnEndOfStream: false) < RawArchiveWriter.HeaderSize)
+            return null;
+        var fetchedAt = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64BigEndian(header));
+        var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(8));
+        if (length is < 0 or > MaxPayloadBytes)
+            throw new InvalidDataException($"Record at fetched-at {fetchedAt:O} claims {length} bytes; archive is corrupt.");
+        var payload = new byte[length];
+        if (stream.ReadAtLeast(payload, length, throwOnEndOfStream: false) < length)
+            return null;
+        return new RawRecord(fetchedAt, payload);
+    }
+
+    const int MaxPayloadBytes = 64 << 20;
 }

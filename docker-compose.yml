@@ -1,11 +1,30 @@
 services:
+  # Records the raw feeds. Nothing else may slow it down or take it out.
   ingest:
-    build: .
+    build:
+      context: .
+      args: { PROJECT: Ingest }
     restart: unless-stopped
+    environment:
+      Ingest__DataDir: /data
     volumes:
       - ./data:/data
-    logging:
+    logging: &logging
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Derives crossings from the archive into SQLite. Reads data/ only, so a bug here can't touch the recording.
+  detect:
+    build:
+      context: .
+      args: { PROJECT: Detect }
+    restart: unless-stopped
+    environment:
+      Detect__DataDir: /data
+      Detect__DbPath: /derived/crossings.db
+    volumes:
+      - ./data:/data:ro
+      - ./derived:/derived
+    logging: *logging

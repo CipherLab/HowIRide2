@@ -18,24 +18,35 @@ public sealed class Pattern(string shapeId, Polyline shape, StopPoint[] stops)
     public Checkpoint[] Checkpoints { get; } = CheckpointBuilder.Build(stops);
 }
 
-public sealed record TripInfo(string TripId, string RouteId, int DirectionId, Pattern Pattern);
+/// <param name="FeedVersion">Which static GTFS file this trip came from, recorded with each crossing.</param>
+public sealed record TripInfo(string TripId, string RouteId, int DirectionId, Pattern Pattern, string FeedVersion = "");
+
+/// <summary>A trip plus the projection its pattern's geometry is in, as needed to match pings against it.</summary>
+public readonly record struct ResolvedTrip(TripInfo Trip, LocalProjection Projection);
 
 /// <summary>The parts of a static GTFS feed that crossing detection needs.</summary>
 public sealed class StaticFeed
 {
-    StaticFeed(LocalProjection projection, Dictionary<string, TripInfo> trips, int patternCount)
+    StaticFeed(string version, LocalProjection projection, Dictionary<string, TripInfo> trips, int patternCount)
     {
+        Version = version;
         Projection = projection;
         Trips = trips;
         PatternCount = patternCount;
     }
 
+    public string Version { get; }
     public LocalProjection Projection { get; }
     public IReadOnlyDictionary<string, TripInfo> Trips { get; }
     public int PatternCount { get; }
 
-    public static StaticFeed Load(string zipPath)
+    public ResolvedTrip? Resolve(string tripId) =>
+        Trips.TryGetValue(tripId, out var trip) ? new ResolvedTrip(trip, Projection) : null;
+
+    /// <param name="version">Recorded with each crossing; defaults to the file name.</param>
+    public static StaticFeed Load(string zipPath, string? version = null)
     {
+        version ??= Path.GetFileNameWithoutExtension(zipPath);
         using var zip = ZipFile.OpenRead(zipPath);
         IEnumerable<CsvRow> Table(string name)
         {
@@ -80,9 +91,9 @@ public sealed class StaticFeed
             var key = trip.Shape + "|" + string.Join(";", stops.Select(s => $"{s.StopId}@{s.Dist:F1}"));
             if (!patterns.TryGetValue(key, out var pattern))
                 patterns[key] = pattern = new Pattern(trip.Shape, shape, stops);
-            trips[tripId] = new TripInfo(tripId, trip.Route, trip.Direction, pattern);
+            trips[tripId] = new TripInfo(tripId, trip.Route, trip.Direction, pattern, version);
         }
-        return new StaticFeed(projection, trips, patterns.Count);
+        return new StaticFeed(version, projection, trips, patterns.Count);
     }
 
     static double ParseOrNaN(string s) => double.TryParse(s, out var v) ? v : double.NaN;

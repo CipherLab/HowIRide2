@@ -11,7 +11,8 @@ public enum CheckpointKind { Stop, Synthetic }
 /// </summary>
 /// <param name="Id">Stop id, or "{fromStop}>{toStop}#{k}" for synthetics, so the same physical point gets the same id on every route.</param>
 /// <param name="StopSequence">The stop's sequence, or for a synthetic the sequence of the stop before it.</param>
-public sealed record Checkpoint(int Index, string Id, CheckpointKind Kind, int StopSequence, double Dist, double Entry, double Exit);
+/// <param name="PreviousId">The checkpoint before this one on the pattern; (PreviousId, Id) names the physical segment just travelled.</param>
+public sealed record Checkpoint(int Index, string Id, CheckpointKind Kind, int StopSequence, double Dist, double Entry, double Exit, string? PreviousId);
 
 public static class CheckpointBuilder
 {
@@ -30,7 +31,7 @@ public static class CheckpointBuilder
             var before = i > 0 ? stop.Dist - stops[i - 1].Dist : double.PositiveInfinity;
             var after = i < stops.Count - 1 ? stops[i + 1].Dist - stop.Dist : double.PositiveInfinity;
             var radius = Math.Min(StopRadius, Math.Min(before, after) / 2);
-            result.Add(new Checkpoint(result.Count, stop.StopId, CheckpointKind.Stop, stop.Sequence, stop.Dist, stop.Dist - radius, stop.Dist + radius));
+            result.Add(new Checkpoint(result.Count, stop.StopId, CheckpointKind.Stop, stop.Sequence, stop.Dist, stop.Dist - radius, stop.Dist + radius, Previous()));
 
             if (i == stops.Count - 1 || after <= 2 * SyntheticSpacing)
                 continue;
@@ -39,9 +40,11 @@ public static class CheckpointBuilder
             for (var k = 1; k <= count; k++)
             {
                 var dist = stop.Dist + after * k / (count + 1);
-                result.Add(new Checkpoint(result.Count, $"{stop.StopId}>{next.StopId}#{k}", CheckpointKind.Synthetic, stop.Sequence, dist, dist, dist));
+                result.Add(new Checkpoint(result.Count, $"{stop.StopId}>{next.StopId}#{k}", CheckpointKind.Synthetic, stop.Sequence, dist, dist, dist, Previous()));
             }
         }
         return [.. result];
+
+        string? Previous() => result.Count > 0 ? result[^1].Id : null;
     }
 }
