@@ -1,10 +1,9 @@
-import { GeolocateControl, Map as MapLibre, NavigationControl, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
+import { GeolocateControl, LngLatBounds, Map as MapLibre, NavigationControl, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { FeatureCollection } from 'geojson'
 import { useEffect, useRef } from 'react'
 import { api, isRapid } from './api'
-import { PACE_COLORS } from './components'
-import type { LiveVehicles } from './live'
+import type { LiveVehicles, Placed } from './live'
 import { ARROW_ICON, arrowIcon, STOP_ICON, stopIcon } from './vehicleIcon'
 
 // MapLibre 6 runs tile work in a separate worker file; bundlers must ship it and say where it is.
@@ -19,26 +18,51 @@ function panelPadding() {
   return window.innerWidth > 720 ? { left: 420, top: 0, right: 0, bottom: 0 } : { left: 0, top: 0, right: 0, bottom: window.innerHeight * 0.58 }
 }
 
-const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
+/** Fly to a point unless it's already on screen at a useful zoom. */
+function flyIfNeeded(map: MapLibre, lon: number, lat: number, minZoom: number) {
+  if (map.getBounds().contains([lon, lat]) && map.getZoom() >= minZoom - 0.5) return false
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), minZoom), essential: false, animate: !reduce, padding: panelPadding() })
+  return true
+}
 
 /**
- * Fill is today's pace on the road ahead (amber slower than usual, blue faster); most Metro Transit bus
- * routes share one brand colour, so pace is the more informative fill. The route colour is kept as the outline.
+ * Centre the map on a followed vehicle, flying there first if it's off screen. Waits out flights and the user's
+ * own zooms and pinches, since moving the camera cancels them.
  */
-const paceFill: ExpressionSpecification = [
-  'case',
-  ['!', ['get', 'onTrip']], '#A9B5BE',
-  ['==', ['get', 'pace'], null], PACE_COLORS.normal,
-  ['>=', ['get', 'pace'], 1.15], PACE_COLORS.slow,
-  ['<=', ['get', 'pace'], 0.9], PACE_COLORS.fast,
-  PACE_COLORS.normal,
-]
+function keepCentred(map: MapLibre, p: Placed) {
+  if (map.isMoving()) return
+  if (!flyIfNeeded(map, p.lon, p.lat, 14)) map.jumpTo({ center: [p.lon, p.lat], padding: panelPadding() })
+}
 
-export function MapView({ live, selection, onSelect }: { live: LiveVehicles; selection: Selection; onSelect: (s: Selection) => void }) {
+const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
+
+/** Vehicles are filled with their route's colour; the grey ones aren't on a trip. */
+const vehicleFill: ExpressionSpecification = ['case', ['get', 'onTrip'], ['get', 'color'], '#A9B5BE']
+
+export function MapView({
+  live,
+  selection,
+  onSelect,
+  follow,
+  onFollowChange,
+}: {
+  live: LiveVehicles
+  selection: Selection
+  onSelect: (s: Selection) => void
+  /** Keep the selected vehicle centred as it moves. */
+  follow: boolean
+  onFollowChange: (follow: boolean) => void
+}) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibre | null>(null)
+  const reloadStops = useRef(() => {})
   const selectionRef = useRef(selection)
   selectionRef.current = selection
+  const followRef = useRef(follow)
+  followRef.current = follow
+  const onFollowChangeRef = useRef(onFollowChange)
+  onFollowChangeRef.current = onFollowChange
 
   useEffect(() => {
     const map = new MapLibre({
@@ -108,10 +132,10 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
         filter: ['!', ['has', 'bearing']],
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['get', 'onTrip'], 4, 2.5], 14, ['case', ['get', 'onTrip'], 8, 4]],
-          'circle-color': paceFill,
+          'circle-color': vehicleFill,
           'circle-opacity': ['case', ['get', 'onTrip'], 1, 0.6],
-          'circle-stroke-color': ['case', ['get', 'selected'], '#14212B', ['get', 'color']],
-          'circle-stroke-width': ['case', ['get', 'selected'], 3, ['case', ['get', 'onTrip'], 2, 0]],
+          'circle-stroke-color': ['case', ['get', 'selected'], '#14212B', '#FFFFFF'],
+          'circle-stroke-width': ['case', ['get', 'selected'], 3, ['case', ['get', 'onTrip'], 1.5, 0]],
         },
       })
       // Everything on a trip is a boxy arrow pointing along its route.
@@ -131,9 +155,10 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
           'symbol-sort-key': ['case', ['get', 'selected'], 1, 0],
         },
         paint: {
-          'icon-color': paceFill,
-          'icon-halo-color': ['case', ['get', 'selected'], '#14212B', ['get', 'color']],
-          'icon-halo-width': ['case', ['get', 'selected'], 3, 2],
+          'icon-color': vehicleFill,
+          // White keeps dark route colours visible on the grey streets; the selected vehicle gets an ink ring.
+          'icon-halo-color': ['case', ['get', 'selected'], '#14212B', '#FFFFFF'],
+          'icon-halo-width': ['case', ['get', 'selected'], 3, 1.5],
         },
       })
       map.addLayer({
@@ -149,7 +174,7 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
           'text-ignore-placement': true,
         },
         filter: ['get', 'onTrip'],
-        paint: { 'text-color': ['case', ['>=', ['coalesce', ['get', 'pace'], 1], 1.15], '#14212B', '#FFFFFF'] },
+        paint: { 'text-color': ['get', 'textColor'] },
       })
 
       for (const layer of ['vehicle-arrow', 'vehicle-idle', 'stops']) {
@@ -168,9 +193,17 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
         if (id) onSelect({ kind: 'stop', id: String(id) })
       })
 
-      const loadStops = () => {
+      // Fetch a margin around the view, and only again once the view leaves it: following a bus moves the
+      // map ten times a second.
+      let loaded: LngLatBounds | null = null
+      const loadStops = (force = false) => {
         if (map.getZoom() < STOPS_MIN_ZOOM) return
-        const b = map.getBounds()
+        const view = map.getBounds()
+        if (!force && loaded && loaded.contains(view.getSouthWest()) && loaded.contains(view.getNorthEast())) return
+        const dLat = (view.getNorth() - view.getSouth()) / 2
+        const dLon = (view.getEast() - view.getWest()) / 2
+        const b = new LngLatBounds([view.getWest() - dLon, view.getSouth() - dLat], [view.getEast() + dLon, view.getNorth() + dLat])
+        loaded = b
         api.stops(b.getSouth(), b.getWest(), b.getNorth(), b.getEast()).then((stops) => {
           const selected = selectionRef.current?.kind === 'stop' ? selectionRef.current.id : null
           ;(map.getSource('stops') as GeoJSONSource).setData({
@@ -188,20 +221,32 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
               },
             })),
           })
-        })
+        }, () => (loaded = null))
       }
-      map.on('moveend', loadStops)
+      map.on('moveend', () => loadStops())
+      reloadStops.current = () => loadStops(true)
       loadStops()
     })
+
+    // Dragging the map means the user wants to look elsewhere; stop following.
+    map.on('dragstart', () => followRef.current && onFollowChangeRef.current(false))
+    // Moving the camera cancels a press that hasn't turned into a drag yet, so hold still while one is down.
+    let pressed = false
+    const press = () => (pressed = true)
+    const release = () => (pressed = false)
+    map.getCanvasContainer().addEventListener('pointerdown', press)
+    window.addEventListener('pointerup', release)
+    window.addEventListener('pointercancel', release)
 
     // Place every bus at playback time ~10 times a second.
     const timer = setInterval(() => {
       const source = map.getSource('vehicles') as GeoJSONSource | undefined
       if (!source) return
       const selected = selectionRef.current?.kind === 'vehicle' ? selectionRef.current.id : null
+      const placed = live.place()
       source.setData({
         type: 'FeatureCollection',
-        features: live.place().map((p) => ({
+        features: placed.map((p) => ({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
           properties: {
@@ -209,7 +254,6 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
             route: p.vehicle.route ?? '',
             color: `#${p.vehicle.color ?? '4F5B66'}`,
             textColor: `#${p.vehicle.textColor ?? 'FFFFFF'}`,
-            pace: p.vehicle.pace,
             onTrip: p.vehicle.dist != null,
             selected: p.vehicle.id === selected,
             // Direction of travel along the route shape; absent for vehicles not on a trip.
@@ -217,10 +261,14 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
           },
         })),
       })
+      const followed = followRef.current && selected ? placed.find((p) => p.vehicle.id === selected) : undefined
+      if (followed && !pressed) keepCentred(map, followed)
     }, FRAME_MS)
 
     return () => {
       clearInterval(timer)
+      window.removeEventListener('pointerup', release)
+      window.removeEventListener('pointercancel', release)
       map.remove()
     }
   }, [live, onSelect])
@@ -243,34 +291,32 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
             }
           : EMPTY,
       )
-      map.fire('moveend')
+      reloadStops.current()
     }
     if (map.isStyleLoaded()) apply()
     else map.once('load', apply)
   }, [selection, live])
 
-  // Bring a newly selected stop or vehicle into view (also when arriving from a shared link).
-  const selectedKey = selection ? `${selection.kind}/${selection.id}` : null
+  // While following, zooming keeps the bus in the middle instead of zooming toward the pointer.
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !selection) return
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const go = (lon: number, lat: number) => {
-      const zoom = Math.max(map.getZoom(), selection.kind === 'stop' ? 16 : 14)
-      if (!map.getBounds().contains([lon, lat]) || map.getZoom() < zoom - 0.5)
-        map.flyTo({ center: [lon, lat], zoom, essential: false, animate: !reduce, padding: panelPadding() })
-    }
-    if (selection.kind === 'stop') api.stop(selection.id).then((r) => go(r.stop.lon, r.stop.lat), () => {})
-    else {
-      const tryVehicle = (attempt: number) => {
-        const v = live.vehicle(selection.id)
-        if (v) go(v.lon, v.lat)
-        else if (attempt < 20) setTimeout(() => tryVehicle(attempt + 1), 500)
-      }
-      tryVehicle(0)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKey, live])
+    if (!map) return
+    // enable() ignores new options while already enabled.
+    const around = follow ? { around: 'center' as const } : undefined
+    map.scrollZoom.disable()
+    map.scrollZoom.enable(around)
+    map.touchZoomRotate.disable()
+    map.touchZoomRotate.enable(around)
+  }, [follow])
+
+  // Bring a newly selected stop into view (also when arriving from a shared link). Vehicles are brought into
+  // view by following them.
+  const stopId = selection?.kind === 'stop' ? selection.id : null
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !stopId) return
+    api.stop(stopId).then((r) => flyIfNeeded(map, r.stop.lon, r.stop.lat, 16), () => {})
+  }, [stopId])
 
   return <div ref={container} className="map" aria-label="Live map of buses and trains" role="application" />
 }

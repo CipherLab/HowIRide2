@@ -133,5 +133,3 @@ export function paceWords(pace: number | null) {
   if (pct < 8) return 'Moving at a normal pace for this time of day'
   return pace > 1 ? `Running ${pct}% slower than usual on the road ahead` : `Running ${pct}% faster than usual on the road ahead`
 }
-
-export const PACE_COLORS = { slow: '#F2A900', fast: '#2E8BC0', normal: '#14212B' }

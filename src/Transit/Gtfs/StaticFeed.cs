@@ -135,6 +135,9 @@ public sealed class StaticFeed
             r["route_short_name"].Length > 0 ? r["route_short_name"] : Short(r["route_long_name"]), r["route_long_name"],
             r["route_color"].Length > 0 ? r["route_color"] : "4F5B66", r["route_text_color"].Length > 0 ? r["route_text_color"] : "FFFFFF",
             int.TryParse(r["route_type"], out var t) ? t : 3));
+        var shapesByRoute = tripRows.Values.GroupBy(tr => tr.Route)
+            .ToDictionary(g => g.Key, g => g.Select(tr => tr.Shape).Distinct().Where(geometry.ContainsKey).Select(id => geometry[id]));
+        routes = RouteColors.Assign(routes, shapesByRoute);
         var zoneId = Table("agency.txt", required: false).Select(r => r["agency_timezone"]).FirstOrDefault(z => z.Length > 0) ?? "UTC";
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(zoneId);
 

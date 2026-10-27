@@ -17,10 +17,14 @@ export default function App() {
   const [live] = useState(() => new LiveVehicles())
   const [selection, setSelection] = useState<Selection>(fromHash)
   const [view, setView] = useState<View>(() => (location.hash === '#scorecard' ? 'scores' : 'map'))
+  // Picking a vehicle follows it until the user drags the map away.
+  const [follow, setFollow] = useState(true)
   const select = useCallback((s: Selection) => {
     setSelection(s)
     setView('map')
+    if (s?.kind === 'vehicle') setFollow(true)
   }, [])
+  const following = follow && selection?.kind === 'vehicle'
 
   // The selection lives in the URL (#stop/123, #vehicle/456, #scorecard) so a view can be bookmarked or shared.
   useEffect(() => {
@@ -43,7 +47,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <MapView live={live} selection={selection} onSelect={select} />
+      <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} />
       <aside className="panel" aria-label="Details">
         <header className="panel-head">
           <div className="wordmark">
@@ -58,7 +62,9 @@ export default function App() {
             </nav>
           </div>
           <LiveStatus live={live} />
-          {view === 'map' && <Heading selection={selection} live={live} onBack={() => setSelection(null)} />}
+          {view === 'map' && (
+            <Heading selection={selection} live={live} onBack={() => setSelection(null)} following={following} onFollowChange={setFollow} />
+          )}
           {view === 'scores' && <h2 className="title">How accurate are the predictions?</h2>}
         </header>
         <div className="panel-body">
@@ -77,7 +83,19 @@ export default function App() {
   )
 }
 
-function Heading({ selection, live, onBack }: { selection: Selection; live: LiveVehicles; onBack: () => void }) {
+function Heading({
+  selection,
+  live,
+  onBack,
+  following,
+  onFollowChange,
+}: {
+  selection: Selection
+  live: LiveVehicles
+  onBack: () => void
+  following: boolean
+  onFollowChange: (follow: boolean) => void
+}) {
   useLive(live)
   const stop = useQuery({
     queryKey: ['stop', selection?.kind === 'stop' ? selection.id : ''],
@@ -109,7 +127,12 @@ function Heading({ selection, live, onBack }: { selection: Selection; live: Live
   const v = live.vehicle(selection.id)
   return (
     <>
-      {back}
+      <div className="head-actions">
+        {back}
+        <button className="follow" aria-pressed={following} onClick={() => onFollowChange(!following)}>
+          {following ? 'Following' : 'Follow on map'}
+        </button>
+      </div>
       <h2 className="title">
         {v?.route ? <RouteBadge route={v.route} color={v.color} textColor={v.textColor} /> : null} {v?.headsign ?? `Vehicle ${selection.id}`}
       </h2>

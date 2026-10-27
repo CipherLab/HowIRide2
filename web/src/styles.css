@@ -138,6 +138,35 @@ button {
   background: rgb(243 246 247 / 0.12);
 }
 
+.head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Follow toggle: amber while the map is tracking the vehicle, a quiet outline when it isn't. */
+.follow {
+  border: 1px solid rgb(243 246 247 / 0.4);
+  background: transparent;
+  color: var(--snow);
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.follow:hover {
+  background: rgb(243 246 247 / 0.12);
+}
+
+.follow[aria-pressed='true'] {
+  border-color: var(--amber);
+  background: var(--amber);
+  color: var(--ink);
+}
+
 .status {
   margin-top: 8px;
   font-size: 13px;
@@ -338,6 +367,11 @@ button.row:hover {
   gap: 6px 10px;
   align-items: center;
   font-size: 14px;
+}
+
+.arrow-row {
+  display: inline-flex;
+  gap: 2px;
 }
 
 .swatch {

@@ -4,7 +4,6 @@ import { api, bestEstimate, type Score } from './api'
 import {
   clock,
   Countdown,
-  PACE_COLORS,
   paceWords,
   RouteBadge,
   spanFor,
@@ -53,25 +52,32 @@ export function Overview({ live }: { live: LiveVehicles }) {
         <p className="hint">Tap a bus or train to follow it, or zoom in and tap a stop to see what's coming.</p>
       </div>
       <div className="section">
-        <h2>Arrow colour: today's pace on the road ahead</h2>
+        <h2>Vehicles, in their route's colour</h2>
         <div className="pace-key">
-          <Arrow fill={PACE_COLORS.slow} />
-          <span>Slower than usual for this road and time</span>
-          <Arrow fill={PACE_COLORS.normal} />
-          <span>About normal</span>
-          <Arrow fill={PACE_COLORS.fast} />
-          <span>Faster than usual</span>
+          <span className="arrow-row">
+            <Arrow fill="#00539F" />
+            <Arrow fill="#008144" />
+            <Arrow fill="#F68B1F" />
+          </span>
+          <span>Blue, Green, Gold, Orange and Red lines</span>
+          <span className="arrow-row">
+            <Arrow fill="#7B2D8E" />
+            <Arrow fill="#0E9AA7" />
+            <Arrow fill="#D6338A" />
+          </span>
+          <span>Every other route has its own colour, different from the routes it shares streets with</span>
           <span className="swatch" style={{ background: '#A9B5BE', opacity: 0.6 }} />
           <span>Not in service</span>
         </div>
         <p className="hint" style={{ marginTop: 8 }}>
-          Arrows point the way each vehicle is heading. The outline is the route's colour, which tells the rail and rapid bus lines apart.
+          Arrows point the way each vehicle is heading, with the route number on them when you zoom in. Tap one to follow it
+          and see whether it's running slower than usual.
         </p>
       </div>
       <div className="section">
         <h2>Stops (zoom in to see them)</h2>
         <div className="pace-key">
-          <StopSquare fill="#771473" size={12} />
+          <StopSquare fill="#7B2D8E" size={12} />
           <span>Bus stop, in its route's colour</span>
           <StopSquare fill="#0053A0" size={16} />
           <span>Rail or rapid-line station, in the line's colour</span>
@@ -100,7 +106,7 @@ function StopSquare({ fill, size }: { fill: string; size: number }) {
 function Arrow({ fill }: { fill: string }) {
   return (
     <svg className="arrow-swatch" viewBox={ARROW_VIEWBOX} width="14" height="19" aria-hidden="true" style={{ transform: 'rotate(90deg)' }}>
-      <path d={ARROW_PATH} fill={fill} stroke="#771473" strokeWidth="3" strokeLinejoin="round" />
+      <path d={ARROW_PATH} fill={fill} stroke="#FFFFFF" strokeWidth="2" strokeLinejoin="round" />
     </svg>
   )
 }
