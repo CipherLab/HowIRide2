@@ -28,3 +28,16 @@ services:
       - ./data:/data:ro
       - ./derived:/derived
     logging: *logging
+
+  # Scores predictors against observed departures. Not a long-running service: run on demand or by the
+  # nightly systemd timer (deploy/transit-backtest.timer) with `docker compose run --rm backtest --yesterday ...`.
+  backtest:
+    build:
+      context: .
+      args: { PROJECT: Backtest }
+    profiles: [tools]
+    command: ["--data", "/data", "--db", "/derived/crossings.db", "--yesterday"]
+    volumes:
+      - ./data:/data:ro
+      - ./derived:/derived
+    logging: *logging

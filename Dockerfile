@@ -16,4 +16,5 @@ ARG PROJECT=Ingest
 ENV APP=${PROJECT}
 WORKDIR /app
 COPY --from=build /app .
-ENTRYPOINT ["sh", "-c", "exec dotnet /app/$APP.dll"]
+# "$@" passes run-time arguments (docker compose run backtest --yesterday ...) through to the app.
+ENTRYPOINT ["sh", "-c", "exec dotnet /app/$APP.dll \"$@\"", "--"]

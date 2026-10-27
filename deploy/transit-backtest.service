@@ -1,0 +1,12 @@
+[Unit]
+Description=Score yesterday's transit predictions (transit-eta backtest)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/admin/transit-eta
+ExecStart=/usr/bin/docker compose run --rm backtest
+# Parsing a day of TripUpdates takes a while on the Pi; keep it off the cores ingest and detect use.
+Nice=10
+IOSchedulingClass=idle

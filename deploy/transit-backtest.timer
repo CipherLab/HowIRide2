@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly transit-eta backtest, after the service day has ended
+
+[Timer]
+# Late trips finish by ~3:30 am; detect has stored them by 4:30.
+OnCalendar=*-*-* 04:30:00 America/Chicago
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
