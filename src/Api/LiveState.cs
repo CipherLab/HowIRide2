@@ -29,6 +29,9 @@ public sealed record VehicleView(
     string Id, string? TripId, string? ServiceDate, string? RouteId, string? Route, string? Color, string? TextColor, string? Headsign,
     string? ShapeId, double? Dist, double? DistAt, double Lat, double Lon, double PingAt, double? Pace);
 
+/// <summary>A stop plus the routes that serve it: rail and rapid lines first, then buses in number order.</summary>
+public sealed record StopView(string Id, string Name, double Lat, double Lon, RouteInfo[] Routes);
+
 public sealed record StopTime(string StopId, string Name, int Sequence, double? Scheduled, double? Metro, double? V0, double? V1);
 
 public sealed record VehicleDetail(VehicleView Vehicle, StopTime[] NextStops);
@@ -58,6 +61,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     CrossingDetector? _detector;
     Dictionary<(string Date, string Trip), Dictionary<int, long>> _metro = [];
     Dictionary<string, (Pattern Pattern, int Checkpoint)[]> _stopPatterns = [];
+    Dictionary<string, RouteInfo[]> _stopRoutes = [];
     SegmentStats? _stats;
     RecentPace? _pace;
     DateTimeOffset _paceBuiltAt;
@@ -79,12 +83,32 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
         _ready.TrySetResult();
     }
 
-    void IndexStops() =>
+    void IndexStops()
+    {
         _stopPatterns = _feeds.Feeds
             .SelectMany(f => f.Trips.Values.Select(t => t.Pattern)).Distinct()
             .SelectMany(p => p.Checkpoints.Where(c => c.Kind == CheckpointKind.Stop).Select(c => (c.Id, Entry: (p, c.Index))))
             .GroupBy(x => x.Id)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Entry).ToArray());
+
+        var routeIdsByPattern = _feeds.Feeds.SelectMany(f => f.Trips.Values)
+            .GroupBy(t => t.Pattern)
+            .ToDictionary(g => g.Key, g => g.Select(t => t.RouteId).Distinct().ToArray());
+        _stopRoutes = _stopPatterns.ToDictionary(kv => kv.Key, kv => kv.Value
+            .SelectMany(e => routeIdsByPattern.GetValueOrDefault(e.Pattern) ?? [])
+            .Distinct()
+            .Select(RouteOf)
+            .OfType<RouteInfo>()
+            .OrderBy(r => IsRapid(r) ? 0 : 1)
+            .ThenBy(r => int.TryParse(r.ShortName, out var n) ? n : int.MaxValue)
+            .ThenBy(r => r.ShortName, StringComparer.Ordinal)
+            .ToArray());
+    }
+
+    /// <summary>Rail and the lettered/coloured rapid bus lines, which get their own colour on the map.</summary>
+    static bool IsRapid(RouteInfo r) => r.Type != 3 || !int.TryParse(r.ShortName, out _);
+
+    StopView ViewOf(StopInfo s) => new(s.Id, s.Name, s.Lat, s.Lon, _stopRoutes.GetValueOrDefault(s.Id) ?? []);
 
     // ---- updates from followers ----
 
@@ -226,18 +250,24 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     public IEnumerable<object> Routes() =>
         _feeds.Feeds.SelectMany(f => f.Routes.Values).DistinctBy(r => r.Id).OrderBy(r => r.ShortName, StringComparer.Ordinal);
 
-    public StopInfo[] StopsIn(double south, double west, double north, double east, int limit = 600)
+    public StopView[] StopsIn(double south, double west, double north, double east, int limit = 600)
     {
         lock (_gate)
             return _stopPatterns.Keys
-                .Select(id => _feeds.Feeds.Select(f => f.Stops.GetValueOrDefault(id)).FirstOrDefault(s => s is not null))
+                .Select(StopInfoOf)
                 .OfType<StopInfo>()
                 .Where(s => s.Lat >= south && s.Lat <= north && s.Lon >= west && s.Lon <= east)
                 .Take(limit)
+                .Select(ViewOf)
                 .ToArray();
     }
 
-    public StopInfo? Stop(string id) =>
+    public StopView? Stop(string id)
+    {
+        lock (_gate) return StopInfoOf(id) is { } s ? ViewOf(s) : null;
+    }
+
+    StopInfo? StopInfoOf(string id) =>
         _feeds.Feeds.Select(f => f.Stops.GetValueOrDefault(id)).FirstOrDefault(s => s is not null);
 
     public VehicleDetail? Vehicle(string id)
@@ -307,7 +337,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             if (_pace is not null)
                 v1 = new SegmentEtaPredictor("v1", _stats, _pace, empty, _ => trip, Zone).Predict(trip, cp.Index, rows, dayType, origin, now);
         }
-        var name = Stop(cp.Id)?.Name ?? cp.Id;
+        var name = StopInfoOf(cp.Id)?.Name ?? cp.Id;
         return new StopTime(cp.Id, name, cp.StopSequence, scheduled, metro, Round(v0), Round(v1));
 
         static double? Round(double? v) => v is { } x ? Math.Round(x) : null;

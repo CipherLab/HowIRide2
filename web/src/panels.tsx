@@ -14,6 +14,7 @@ import {
   VsSchedule,
 } from './components'
 import type { LiveVehicles } from './live'
+import { ARROW_PATH, ARROW_VIEWBOX, STOP_PATH, STOP_VIEWBOX } from './vehicleIcon'
 import type { Selection } from './MapView'
 
 const SOURCE_LABEL = { ours: 'our estimate', metro: "Metro Transit's estimate", schedule: 'timetable' }
@@ -52,18 +53,30 @@ export function Overview({ live }: { live: LiveVehicles }) {
         <p className="hint">Tap a bus or train to follow it, or zoom in and tap a stop to see what's coming.</p>
       </div>
       <div className="section">
-        <h2>Dot colour: today's pace on the road ahead</h2>
+        <h2>Arrow colour: today's pace on the road ahead</h2>
         <div className="pace-key">
-          <span className="swatch" style={{ background: PACE_COLORS.slow }} />
+          <Arrow fill={PACE_COLORS.slow} />
           <span>Slower than usual for this road and time</span>
-          <span className="swatch" style={{ background: PACE_COLORS.normal }} />
+          <Arrow fill={PACE_COLORS.normal} />
           <span>About normal</span>
-          <span className="swatch" style={{ background: PACE_COLORS.fast }} />
+          <Arrow fill={PACE_COLORS.fast} />
           <span>Faster than usual</span>
           <span className="swatch" style={{ background: '#A9B5BE', opacity: 0.6 }} />
           <span>Not in service</span>
         </div>
-        <p className="hint" style={{ marginTop: 8 }}>The ring is the route's colour, which tells the rail and rapid bus lines apart.</p>
+        <p className="hint" style={{ marginTop: 8 }}>
+          Arrows point the way each vehicle is heading. The outline is the route's colour, which tells the rail and rapid bus lines apart.
+        </p>
+      </div>
+      <div className="section">
+        <h2>Stops (zoom in to see them)</h2>
+        <div className="pace-key">
+          <StopSquare fill="#771473" size={12} />
+          <span>Bus stop, in its route's colour</span>
+          <StopSquare fill="#0053A0" size={16} />
+          <span>Rail or rapid-line station, in the line's colour</span>
+        </div>
+        <p className="hint" style={{ marginTop: 8 }}>Zoom in further to see which routes stop at each one.</p>
       </div>
       <div className="section">
         <h2>How the map moves</h2>
@@ -73,6 +86,22 @@ export function Overview({ live }: { live: LiveVehicles }) {
         </p>
       </div>
     </>
+  )
+}
+
+function StopSquare({ fill, size }: { fill: string; size: number }) {
+  return (
+    <svg viewBox={STOP_VIEWBOX} width={size + 6} height={size + 6} aria-hidden="true">
+      <path d={STOP_PATH} fill={fill} stroke={fill} strokeWidth="4" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function Arrow({ fill }: { fill: string }) {
+  return (
+    <svg className="arrow-swatch" viewBox={ARROW_VIEWBOX} width="14" height="19" aria-hidden="true" style={{ transform: 'rotate(90deg)' }}>
+      <path d={ARROW_PATH} fill={fill} stroke="#771473" strokeWidth="3" strokeLinejoin="round" />
+    </svg>
   )
 }
 

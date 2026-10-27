@@ -2,9 +2,10 @@ import { GeolocateControl, Map as MapLibre, NavigationControl, setWorkerUrl, typ
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { FeatureCollection } from 'geojson'
 import { useEffect, useRef } from 'react'
-import { api } from './api'
+import { api, isRapid } from './api'
 import { PACE_COLORS } from './components'
 import type { LiveVehicles } from './live'
+import { ARROW_ICON, arrowIcon, STOP_ICON, stopIcon } from './vehicleIcon'
 
 // MapLibre 6 runs tile work in a separate worker file; bundlers must ship it and say where it is.
 setWorkerUrl(mapWorkerUrl)
@@ -21,8 +22,8 @@ function panelPadding() {
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
 /**
- * Dot colour is today's pace on the road ahead (amber slower than usual, blue faster); most Metro Transit bus
- * routes share one brand colour, so pace is the more informative fill. The route colour is kept as the ring.
+ * Fill is today's pace on the road ahead (amber slower than usual, blue faster); most Metro Transit bus
+ * routes share one brand colour, so pace is the more informative fill. The route colour is kept as the outline.
  */
 const paceFill: ExpressionSpecification = [
   'case',
@@ -70,38 +71,69 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
         paint: { 'line-color': ['get', 'color'], 'line-width': 5 },
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       })
+      // Stops are squares, so they can't be mistaken for vehicles or for Metro Transit's hollow ring in the
+      // timelines. Coloured by the first route serving them: a rail or rapid-line colour if any, else the bus colour.
+      map.addImage(STOP_ICON, stopIcon(), { sdf: true })
       map.addLayer({
         id: 'stops',
-        type: 'circle',
+        type: 'symbol',
         source: 'stops',
         minzoom: STOPS_MIN_ZOOM,
+        layout: {
+          'icon-image': STOP_ICON,
+          'icon-size': ['case', ['get', 'selected'], 1.2, ['get', 'rapid'], 1, 0.7],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'text-field': ['step', ['zoom'], '', 16, ['get', 'label']],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': 10,
+          'text-anchor': 'left',
+          'text-offset': [0.9, 0],
+          'text-optional': true,
+        },
         paint: {
-          'circle-radius': ['case', ['get', 'selected'], 8, 4.5],
-          'circle-color': ['case', ['get', 'selected'], '#F2A900', '#FFFFFF'],
-          'circle-stroke-color': '#14212B',
-          'circle-stroke-width': 2,
+          'icon-color': ['get', 'color'],
+          'icon-halo-color': ['case', ['get', 'selected'], '#F2A900', '#FFFFFF'],
+          'icon-halo-width': ['case', ['get', 'selected'], 3, 1.5],
+          'text-color': '#14212B',
+          'text-halo-color': '#FFFFFF',
+          'text-halo-width': 1.5,
         },
       })
+      // Vehicles with no direction (not on a trip, or shape still loading) stay small dots.
       map.addLayer({
-        id: 'vehicle-ring',
+        id: 'vehicle-idle',
         type: 'circle',
         source: 'vehicles',
+        filter: ['!', ['has', 'bearing']],
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['get', 'onTrip'], 6, 3.5], 14, ['case', ['get', 'onTrip'], 12, 6]],
-          'circle-color': ['get', 'color'],
-          'circle-opacity': ['case', ['get', 'onTrip'], 1, 0.35],
-          'circle-stroke-color': '#14212B',
-          'circle-stroke-width': ['case', ['get', 'selected'], 3, 0],
-        },
-      })
-      map.addLayer({
-        id: 'vehicle-dot',
-        type: 'circle',
-        source: 'vehicles',
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['get', 'onTrip'], 4, 2.5], 14, ['case', ['get', 'onTrip'], 9, 4]],
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['get', 'onTrip'], 4, 2.5], 14, ['case', ['get', 'onTrip'], 8, 4]],
           'circle-color': paceFill,
           'circle-opacity': ['case', ['get', 'onTrip'], 1, 0.6],
+          'circle-stroke-color': ['case', ['get', 'selected'], '#14212B', ['get', 'color']],
+          'circle-stroke-width': ['case', ['get', 'selected'], 3, ['case', ['get', 'onTrip'], 2, 0]],
+        },
+      })
+      // Everything on a trip is a boxy arrow pointing along its route.
+      map.addImage(ARROW_ICON, arrowIcon(), { sdf: true })
+      map.addLayer({
+        id: 'vehicle-arrow',
+        type: 'symbol',
+        source: 'vehicles',
+        filter: ['has', 'bearing'],
+        layout: {
+          'icon-image': ARROW_ICON,
+          'icon-rotate': ['get', 'bearing'],
+          'icon-rotation-alignment': 'map',
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['get', 'selected'], 0.45, 0.3], 13, ['case', ['get', 'selected'], 0.7, 0.5], 16, ['case', ['get', 'selected'], 1, 0.85]],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'symbol-sort-key': ['case', ['get', 'selected'], 1, 0],
+        },
+        paint: {
+          'icon-color': paceFill,
+          'icon-halo-color': ['case', ['get', 'selected'], '#14212B', ['get', 'color']],
+          'icon-halo-width': ['case', ['get', 'selected'], 3, 2],
         },
       })
       map.addLayer({
@@ -120,7 +152,7 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
         paint: { 'text-color': ['case', ['>=', ['coalesce', ['get', 'pace'], 1], 1.15], '#14212B', '#FFFFFF'] },
       })
 
-      for (const layer of ['vehicle-dot', 'vehicle-ring', 'stops']) {
+      for (const layer of ['vehicle-arrow', 'vehicle-idle', 'stops']) {
         map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'))
         map.on('mouseleave', layer, () => (map.getCanvas().style.cursor = ''))
       }
@@ -128,9 +160,10 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
         const id = e.features?.[0]?.properties?.id
         if (id) onSelect({ kind: 'vehicle', id: String(id) })
       }
-      map.on('click', 'vehicle-ring', pickVehicle)
+      map.on('click', 'vehicle-arrow', pickVehicle)
+      map.on('click', 'vehicle-idle', pickVehicle)
       map.on('click', 'stops', (e: MapLayerMouseEvent) => {
-        if (map.queryRenderedFeatures(e.point, { layers: ['vehicle-ring'] }).length > 0) return
+        if (map.queryRenderedFeatures(e.point, { layers: ['vehicle-arrow', 'vehicle-idle'] }).length > 0) return
         const id = e.features?.[0]?.properties?.id
         if (id) onSelect({ kind: 'stop', id: String(id) })
       })
@@ -145,7 +178,14 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
             features: stops.map((s) => ({
               type: 'Feature',
               geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
-              properties: { id: s.id, name: s.name, selected: s.id === selected },
+              properties: {
+                id: s.id,
+                name: s.name,
+                selected: s.id === selected,
+                color: `#${s.routes[0]?.color ?? '7A8A96'}`,
+                rapid: s.routes.some(isRapid),
+                label: s.routes.length > 6 ? `${s.routes.slice(0, 6).map((r) => r.shortName).join(' · ')} +${s.routes.length - 6}` : s.routes.map((r) => r.shortName).join(' · '),
+              },
             })),
           })
         })
@@ -172,6 +212,8 @@ export function MapView({ live, selection, onSelect }: { live: LiveVehicles; sel
             pace: p.vehicle.pace,
             onTrip: p.vehicle.dist != null,
             selected: p.vehicle.id === selected,
+            // Direction of travel along the route shape; absent for vehicles not on a trip.
+            ...(p.bearing != null && p.vehicle.dist != null ? { bearing: Math.round(p.bearing) } : {}),
           },
         })),
       })

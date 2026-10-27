@@ -31,12 +31,27 @@ export interface Shape {
   dist: number[]
 }
 
+export interface Route {
+  id: string
+  shortName: string
+  longName: string
+  color: string
+  textColor: string
+  /** GTFS route_type: 0 light rail, 2 commuter rail, 3 bus. */
+  type: number
+}
+
 export interface Stop {
   id: string
   name: string
   lat: number
   lon: number
+  /** Routes serving the stop: rail and rapid lines first, then buses by number. */
+  routes: Route[]
 }
+
+/** Rail, and the lettered or coloured rapid bus lines (A, C, D, Orange...). */
+export const isRapid = (r: Route) => r.type !== 3 || !/^\d+$/.test(r.shortName)
 
 /** One stop on a trip, with every predictor's departure time. */
 export interface StopTime {

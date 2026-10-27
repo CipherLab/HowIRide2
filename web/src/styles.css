@@ -418,3 +418,17 @@ table.scores td.best {
     transition: none !important;
   }
 }
+
+.served {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+
+.served .badge {
+  min-width: 30px;
+  height: 22px;
+  font-size: 13px;
+  box-shadow: 0 0 0 1px rgb(243 246 247 / 0.25);
+}

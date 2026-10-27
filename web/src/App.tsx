@@ -95,6 +95,13 @@ function Heading({ selection, live, onBack }: { selection: Selection; live: Live
         {back}
         <h2 className="title">{stop.data?.stop.name ?? 'Stop'}</h2>
         <p className="subtitle">Stop #{selection.id}</p>
+        {stop.data && stop.data.stop.routes.length > 0 && (
+          <p className="served" aria-label="Routes serving this stop">
+            {stop.data.stop.routes.map((r) => (
+              <RouteBadge key={r.id} route={r.shortName} color={r.color} textColor={r.textColor} />
+            ))}
+          </p>
+        )}
       </>
     )
   const v = live.vehicle(selection.id)
