@@ -5,3 +5,5 @@ data/
 .vs/
 .idea/
 derived/
+web/node_modules/
+src/Api/wwwroot/

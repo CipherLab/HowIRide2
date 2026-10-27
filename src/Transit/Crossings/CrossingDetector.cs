@@ -42,6 +42,9 @@ public sealed class CrossingDetector(Func<string, ResolvedTrip?> resolveTrip)
     public Func<string, bool> TraceRoute { get; set; } = _ => false;
     public int ActiveTrackers => _trackers.Count;
 
+    /// <summary>The current tracker for each vehicle. Not thread-safe: read it on the thread that calls OnPing.</summary>
+    public IReadOnlyDictionary<string, TripTracker> Trackers => _trackers;
+
     public IReadOnlyList<StopCrossing> OnPing(VehiclePing ping, DateTimeOffset fetchedAt)
     {
         _buffer.Clear();

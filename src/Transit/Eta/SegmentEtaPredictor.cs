@@ -45,7 +45,11 @@ public sealed class SegmentEtaPredictor(
         }
     }
 
-    double? Predict(TripInfo trip, int target, CrossingRow[] rows, DayType dayType, double serviceOrigin, double now)
+    /// <summary>
+    /// Predicted departure (unix seconds) from checkpoint <paramref name="target"/> as of <paramref name="now"/>,
+    /// using only the trip's crossings in <paramref name="rows"/> that were knowable by then.
+    /// </summary>
+    public double? Predict(TripInfo trip, int target, IReadOnlyList<CrossingRow> rows, DayType dayType, double serviceOrigin, double now)
     {
         var checkpoints = trip.Pattern.Checkpoints;
 

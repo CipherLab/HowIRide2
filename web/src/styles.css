@@ -1,0 +1,420 @@
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+:root {
+  /* Palette: lake navy ink, snow panels, departure-board amber for our estimate and "slower than usual". */
+  --ink: #14212b;
+  --snow: #f3f6f7;
+  --paper: #ffffff;
+  --amber: #f2a900;
+  --amber-deep: #b37d00;
+  --lake: #2e8bc0;
+  --slate: #7a8a96;
+  --rule: #d9e1e6;
+
+  --font-text: 'Atkinson Hyperlegible Next', system-ui, sans-serif;
+  --font-data: 'Atkinson Hyperlegible Mono', ui-monospace, monospace;
+  --font-board: 'Doto', 'Atkinson Hyperlegible Mono', monospace;
+
+  --panel-w: 400px;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgb(20 33 43 / 0.08), 0 8px 24px rgb(20 33 43 / 0.12);
+
+  color: var(--ink);
+  background: var(--snow);
+  font-family: var(--font-text);
+  font-size: 15px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--snow);
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--lake);
+  outline-offset: 2px;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---- Panel: docked left on wide screens, a bottom sheet on phones ---- */
+
+.panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: var(--panel-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--snow);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  z-index: 2;
+}
+
+.panel-head {
+  padding: 14px 16px 12px;
+  background: var(--ink);
+  color: var(--snow);
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0 16px;
+}
+
+@media (max-width: 720px) {
+  .panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 58vh;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wordmark h1 {
+  margin: 0;
+  font-family: var(--font-board);
+  font-weight: 900;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+}
+
+.nav button,
+.back {
+  border: 0;
+  background: transparent;
+  color: rgb(243 246 247 / 0.7);
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.nav button[aria-current='page'],
+.nav button:hover,
+.back:hover {
+  color: var(--snow);
+  background: rgb(243 246 247 / 0.12);
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 13px;
+  color: rgb(243 246 247 / 0.75);
+  font-family: var(--font-data);
+}
+
+.status .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--amber);
+}
+
+.status .dot.off {
+  background: #d9534f;
+}
+
+.title {
+  margin: 10px 0 0;
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: rgb(243 246 247 / 0.7);
+}
+
+.section {
+  padding: 14px 16px 4px;
+}
+
+.section h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.hint {
+  margin: 0;
+  color: var(--slate);
+}
+
+.empty {
+  padding: 24px 16px;
+  color: var(--slate);
+}
+
+/* ---- Route badge, sized like a stop-sign route plate ---- */
+
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 36px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* ---- Departure rows ---- */
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'badge what when'
+    'strip strip strip';
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.row > .badge {
+  grid-area: badge;
+}
+
+.row .what {
+  grid-area: what;
+  min-width: 0;
+}
+
+.row .what strong {
+  display: block;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row .what small {
+  color: var(--slate);
+  font-size: 13px;
+}
+
+.row .when {
+  grid-area: when;
+  text-align: right;
+}
+
+.row .strip {
+  grid-area: strip;
+}
+
+button.row {
+  width: 100%;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.row:hover {
+  background: rgb(46 139 192 / 0.06);
+}
+
+/* Countdown in departure-board dot matrix: the one place the display face appears besides the wordmark. */
+.countdown {
+  font-family: var(--font-board);
+  font-weight: 900;
+  font-size: 30px;
+  line-height: 0.9;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+.countdown small {
+  font-family: var(--font-text);
+  font-weight: 600;
+  font-size: 12px;
+  margin-left: 2px;
+  letter-spacing: 0;
+}
+
+.countdown.due {
+  color: var(--amber-deep);
+}
+
+.source {
+  display: block;
+  font-size: 12px;
+  color: var(--slate);
+}
+
+.late {
+  color: var(--amber-deep);
+}
+
+.early {
+  color: var(--lake);
+}
+
+/* ---- Timeline strip legend ---- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--slate);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend svg {
+  overflow: visible;
+}
+
+/* ---- Pace swatches ---- */
+
+.pace-key {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+/* ---- Scorecard ---- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.stat {
+  background: var(--paper);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.stat b {
+  display: block;
+  font-family: var(--font-data);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.stat span {
+  font-size: 12px;
+  color: var(--slate);
+}
+
+table.scores {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-data);
+  font-size: 13px;
+}
+
+table.scores th,
+table.scores td {
+  padding: 6px 4px;
+  text-align: right;
+  border-bottom: 1px solid var(--rule);
+}
+
+table.scores th:first-child,
+table.scores td:first-child {
+  text-align: left;
+}
+
+table.scores thead th {
+  font-family: var(--font-text);
+  font-weight: 600;
+  color: var(--slate);
+  font-size: 12px;
+}
+
+table.scores td.best {
+  font-weight: 600;
+  background: rgb(242 169 0 / 0.16);
+}
+
+.chart text {
+  font-family: var(--font-data);
+  font-size: 11px;
+  fill: var(--slate);
+}
+
+.maplibregl-ctrl-attrib {
+  font-family: var(--font-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

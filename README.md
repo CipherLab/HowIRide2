@@ -102,3 +102,24 @@ dotnet run --project src/Backtest -c Release -- <data-dir> <crossings.db> 202610
 - **Only the latest snapshot counts.** At each horizon a predictor's answer is what the newest TripUpdates snapshot said; if the trip had dropped out of it, there is no prediction. A latest snapshot more than 60 s old is treated as an archive gap.
 - **Contenders today:** the printed `schedule` and `metro-tripupdates`. New models implement `IPredictor` and are scored the same way.
 - **Metrics:** coverage, median and p90 absolute error, bias (mean of predicted minus actual), share within ±1 and ±2 minutes, and the *early* rate: the bus left more than 60 s before the predicted time.
+
+## Live map and API
+
+`docker compose up -d` also runs `api` on port 8080: open `http://<node>:8080` on the LAN.
+
+The API follows the archive like `detect` does (its own detector instance for live positions, the TripUpdates feed for Metro Transit's predictions) and reads `crossings.db` hourly to rebuild the v0/v1 tables.
+It serves a React app (`web/`) built into its `wwwroot`.
+
+- **Live map:** every vehicle placed by distance along its real shape, replayed ~15 s behind the newest ping so it glides between GPS reports. Dot colour is today's pace on the road ahead; the ring is the route colour.
+- **Stop:** zoom in and tap a stop, or open `#stop/<id>`. Each departure shows our estimate (amber dot), Metro Transit's (ring) and the timetable (tick) on one minutes-ahead strip.
+- **Vehicle:** tap a bus or open `#vehicle/<id>` for its route line and next stops.
+- **Scorecard:** `#scorecard`, the latest backtest by horizon plus live matcher health.
+
+Endpoints: `/api/health`, `/api/vehicles`, `/api/vehicles/{id}`, `/api/stream` (server-sent events, one snapshot per feed update), `/api/shapes/{id}`, `/api/stops?bbox=s,w,n,e`, `/api/stops/{id}`, `/api/routes`, `/api/scores`.
+
+Develop the UI with hot reload against a local API:
+
+```sh
+dotnet run --project src/Api -- --Api:DataDir=<data> --Api:DbPath=<crossings.db> --Urls=http://127.0.0.1:5199
+cd web && npm install && npm run dev
+```

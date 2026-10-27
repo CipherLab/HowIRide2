@@ -40,6 +40,9 @@ public sealed class Polyline
 
     public double Length => _dist[^1];
 
+    /// <summary>Distance coordinate of each point (GTFS shape_dist_traveled).</summary>
+    public double[] Distances => _dist;
+
     /// <summary>
     /// Nearest point on the line, considering only the part between <paramref name="minDist"/> and
     /// <paramref name="maxDist"/>. Restricting the window is what stops a ping from snapping to the

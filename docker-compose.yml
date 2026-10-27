@@ -41,3 +41,21 @@ services:
       - ./data:/data:ro
       - ./derived:/derived
     logging: *logging
+
+  # Live map and predictions for the LAN: http://<node>:8080
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      Api__DataDir: /data
+      Api__DbPath: /derived/crossings.db
+      Api__BacktestDbPath: /derived/backtest.db
+    volumes:
+      - ./data:/data:ro
+      # Read-write only because SQLite needs its -shm file to read a WAL database; the API never writes.
+      - ./derived:/derived
+    logging: *logging

@@ -1,0 +1,24 @@
+# The live API plus the web app it serves.
+FROM node:22-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npx tsc -b && npx vite build --outDir /wwwroot --emptyOutDir
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY src/Transit/Transit.csproj src/Transit/
+COPY src/Api/Api.csproj src/Api/
+RUN dotnet restore src/Api/Api.csproj
+COPY proto/ proto/
+COPY src/Transit/ src/Transit/
+COPY src/Api/ src/Api/
+RUN dotnet publish src/Api/Api.csproj -c Release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+COPY --from=build /app .
+COPY --from=web /wwwroot ./wwwroot
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "/app/Api.dll"]

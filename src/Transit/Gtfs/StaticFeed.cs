@@ -22,9 +22,18 @@ public sealed class Pattern(string shapeId, Polyline shape, StopPoint[] stops)
 /// <param name="FeedVersion">Which static GTFS file this trip came from, recorded with each crossing.</param>
 public sealed record TripInfo(string TripId, string RouteId, int DirectionId, Pattern Pattern, string FeedVersion = "")
 {
+    public string Headsign { get; init; } = "";
+
     /// <summary>Scheduled departure at each of Pattern.Stops, in seconds after the service day's origin (noon minus 12 h, local); -1 if absent.</summary>
     public int[] ScheduledDepartures { get; init; } = [];
 }
+
+public sealed record StopInfo(string Id, string Name, double Lat, double Lon);
+
+public sealed record RouteInfo(string Id, string ShortName, string LongName, string Color, string TextColor, int Type);
+
+/// <summary>A shape in WGS84 with its distance coordinate, for clients that place vehicles by distance along it.</summary>
+public sealed record ShapeGeometry(string Id, double[] Lat, double[] Lon, double[] Dist);
 
 /// <summary>A trip plus the projection its pattern's geometry is in, as needed to match pings against it.</summary>
 public readonly record struct ResolvedTrip(TripInfo Trip, LocalProjection Projection);
@@ -33,10 +42,13 @@ public readonly record struct ResolvedTrip(TripInfo Trip, LocalProjection Projec
 public sealed class StaticFeed
 {
     StaticFeed(string version, LocalProjection projection, Dictionary<string, TripInfo> trips, int patternCount,
-        Dictionary<string, int> routeTypes, TimeZoneInfo timeZone)
+        Dictionary<string, RouteInfo> routes, TimeZoneInfo timeZone, Dictionary<string, StopInfo> stops, Dictionary<string, ShapeGeometry> shapes)
     {
         Version = version;
-        RouteTypes = routeTypes;
+        Routes = routes;
+        RouteTypes = routes.ToDictionary(kv => kv.Key, kv => kv.Value.Type);
+        Stops = stops;
+        Shapes = shapes;
         TimeZone = timeZone;
         Projection = projection;
         Trips = trips;
@@ -50,6 +62,10 @@ public sealed class StaticFeed
 
     /// <summary>GTFS route_type by route_id: 0 light rail, 2 commuter rail, 3 bus.</summary>
     public IReadOnlyDictionary<string, int> RouteTypes { get; }
+
+    public IReadOnlyDictionary<string, RouteInfo> Routes { get; }
+    public IReadOnlyDictionary<string, StopInfo> Stops { get; }
+    public IReadOnlyDictionary<string, ShapeGeometry> Shapes { get; }
 
     /// <summary>The agency time zone that GTFS clock times are in.</summary>
     public TimeZoneInfo TimeZone { get; }
@@ -94,10 +110,15 @@ public sealed class StaticFeed
         var all = shapePoints.Values.SelectMany(p => p).ToList();
         var projection = new LocalProjection(all.Average(p => p.Lat), all.Average(p => p.Lon));
         var shapes = shapePoints.ToDictionary(kv => kv.Key, kv => BuildPolyline(kv.Value, projection));
+        // BuildPolyline sorted each point list; its distances are reused so the client and matcher agree.
+        var geometry = shapePoints.ToDictionary(kv => kv.Key, kv => new ShapeGeometry(kv.Key,
+            kv.Value.Select(p => p.Lat).ToArray(), kv.Value.Select(p => p.Lon).ToArray(), shapes[kv.Key].Distances));
 
-        var stopCoords = Table("stops.txt").ToDictionary(r => r["stop_id"], r => projection.Project(D(r["stop_lat"]), D(r["stop_lon"])));
+        var stopRows = Table("stops.txt").Where(r => r["stop_lat"].Length > 0).ToList();
+        var stopInfo = stopRows.ToDictionary(r => r["stop_id"], r => new StopInfo(r["stop_id"], r["stop_name"], D(r["stop_lat"]), D(r["stop_lon"])));
+        var stopCoords = stopInfo.ToDictionary(kv => kv.Key, kv => projection.Project(kv.Value.Lat, kv.Value.Lon));
 
-        var tripRows = Table("trips.txt").ToDictionary(r => r["trip_id"], r => (Route: r["route_id"], Direction: int.TryParse(r["direction_id"], out var d) ? d : 0, Shape: r["shape_id"]));
+        var tripRows = Table("trips.txt").ToDictionary(r => r["trip_id"], r => (Route: r["route_id"], Direction: int.TryParse(r["direction_id"], out var d) ? d : 0, Shape: r["shape_id"], Headsign: r["trip_headsign"]));
 
         var stopTimes = new Dictionary<string, List<(int Seq, string StopId, double Dist, int Departure)>>();
         foreach (var r in Table("stop_times.txt"))
@@ -108,7 +129,12 @@ public sealed class StaticFeed
             list.Add((int.Parse(r["stop_sequence"]), r["stop_id"], ParseOrNaN(r["shape_dist_traveled"]), departure));
         }
 
-        var routeTypes = Table("routes.txt", required: false).ToDictionary(r => r["route_id"], r => int.TryParse(r["route_type"], out var t) ? t : 3);
+        // Rapid lines have no short name ("METRO Orange Line"); badges and map labels need "Orange".
+        static string Short(string longName) => longName.Replace("METRO ", "").Replace(" Line", "").Replace(" Commuter Rail", "");
+        var routes = Table("routes.txt", required: false).ToDictionary(r => r["route_id"], r => new RouteInfo(r["route_id"],
+            r["route_short_name"].Length > 0 ? r["route_short_name"] : Short(r["route_long_name"]), r["route_long_name"],
+            r["route_color"].Length > 0 ? r["route_color"] : "4F5B66", r["route_text_color"].Length > 0 ? r["route_text_color"] : "FFFFFF",
+            int.TryParse(r["route_type"], out var t) ? t : 3));
         var zoneId = Table("agency.txt", required: false).Select(r => r["agency_timezone"]).FirstOrDefault(z => z.Length > 0) ?? "UTC";
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(zoneId);
 
@@ -126,9 +152,10 @@ public sealed class StaticFeed
             trips[tripId] = new TripInfo(tripId, trip.Route, trip.Direction, pattern, version)
             {
                 ScheduledDepartures = times.Select(t => t.Departure).ToArray(),
+                Headsign = trip.Headsign,
             };
         }
-        return new StaticFeed(version, projection, trips, patterns.Count, routeTypes, timeZone);
+        return new StaticFeed(version, projection, trips, patterns.Count, routes, timeZone, stopInfo, geometry);
     }
 
     static double D(string s) => double.Parse(s, CultureInfo.InvariantCulture);

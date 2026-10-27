@@ -97,6 +97,17 @@ public sealed class TripTracker
     public int LostPings { get; private set; }
     public bool Finished => _started && _next >= _checkpoints.Length;
 
+    public TripInfo Trip => _trip;
+
+    /// <summary>Meters along the shape at the last confidently matched ping, or null before the first one.</summary>
+    public double? Distance => _started ? _lastDist : null;
+
+    /// <summary>Time of the ping that set <see cref="Distance"/>.</summary>
+    public DateTimeOffset DistanceAt => _lastTime;
+
+    /// <summary>Index of the next checkpoint not yet departed.</summary>
+    public int NextCheckpoint => _next;
+
     /// <summary>Diagnostics hook: called for every ping with the windowed match and the unrestricted nearest match.</summary>
     public Action<PingTrace>? Trace { get; set; }
 

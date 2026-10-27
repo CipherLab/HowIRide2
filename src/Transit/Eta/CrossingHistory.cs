@@ -12,6 +12,12 @@ public sealed record CrossingRow(
     /// reaches us after the feed's own lag. Using anything earlier would leak the future into a backtest.
     /// </summary>
     public double? DepartKnownAt => Depart + (DepartGap ?? 0) + SegmentObservation.FeedLagSeconds;
+
+    public static CrossingRow From(Crossings.StopCrossing c) => new(
+        c.ServiceDate, c.TripId, c.RouteId, c.Checkpoint.Index, c.Checkpoint.Id, c.Checkpoint.PreviousId,
+        c.Checkpoint.Kind == Crossings.CheckpointKind.Stop, c.Checkpoint.Dist,
+        c.Arrive?.ToUnixTimeMilliseconds() / 1000.0, c.Depart?.ToUnixTimeMilliseconds() / 1000.0,
+        c.ArriveGapSeconds, c.DepartGapSeconds, c.Detour);
 }
 
 /// <summary>Travel over one segment by one trip: departure from the previous checkpoint to arrival at this one.</summary>
