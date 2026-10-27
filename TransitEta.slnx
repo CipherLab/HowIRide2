@@ -1,8 +1,11 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Ingest/Ingest.csproj" />
+    <Project Path="src/Replay/Replay.csproj" />
+    <Project Path="src/Transit/Transit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Ingest.Tests/Ingest.Tests.csproj" />
+    <Project Path="tests/Transit.Tests/Transit.Tests.csproj" />
   </Folder>
 </Solution>

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Ingest\Ingest.csproj" />
+    <ProjectReference Include="..\..\src\Transit\Transit.csproj" />
   </ItemGroup>
 
 </Project>

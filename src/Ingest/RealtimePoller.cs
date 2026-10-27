@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using Transit.Archive;
 
 namespace Ingest;
 

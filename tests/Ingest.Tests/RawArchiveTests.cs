@@ -1,4 +1,4 @@
-using Ingest;
+using Transit.Archive;
 
 namespace Ingest.Tests;
 

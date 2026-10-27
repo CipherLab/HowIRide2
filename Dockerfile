@@ -2,7 +2,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY src/Ingest/Ingest.csproj src/Ingest/
+COPY src/Transit/Transit.csproj src/Transit/
 RUN dotnet restore src/Ingest/Ingest.csproj
+COPY proto/ proto/
+COPY src/Transit/ src/Transit/
 COPY src/Ingest/ src/Ingest/
 RUN dotnet publish src/Ingest/Ingest.csproj -c Release -o /app --no-restore
 

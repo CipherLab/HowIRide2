@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using ZstdSharp;
 using ZstdSharp.Unsafe;
 
-namespace Ingest;
+namespace Transit.Archive;
 
 /// <summary>
 /// Append-only archive of raw feed snapshots, one file per feed per UTC hour:

@@ -1,4 +1,4 @@
-namespace Ingest;
+namespace Transit.Archive;
 
 /// <summary>
 /// Reads FeedMessage.header.timestamp straight from protobuf wire format, which is all ingest needs

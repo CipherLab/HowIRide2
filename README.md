@@ -45,3 +45,26 @@ The current hour is uncompressed (~330 MB for tripupdates) before it rolls over.
 Put `data/` on an SSD rather than the Pi's SD card.
 
 Metro Transit returns sporadic 404s while regenerating feeds; the poller logs them and backs off.
+
+## Crossings
+
+`src/Transit` turns vehicle pings into checkpoint crossings, the history every ETA model is trained on.
+
+1. **Checkpoints** per (shape, stop list) pattern: every stop, plus a synthetic point every ~300 m where stops are more than 600 m apart.
+   Stop distances come from `stop_times.shape_dist_traveled` (meters in Metro Transit's feed).
+2. **Map matching** projects each ping onto its trip's shape, searching only a window around the last position so loops and parallel streets can't steal the match.
+   Within 35 m of the shape moves the vehicle; 35-75 m is ignored as noise; beyond 75 m is off-route and flags the next crossing as a detour.
+3. **Crossing times** are interpolated where consecutive pings straddle a boundary.
+   Each stop has a ±30 m zone: entering it is arrival, leaving it is departure, the difference is dwell.
+   Segment travel is departure from one zone to arrival at the next.
+
+Replay recorded hours into a CSV:
+
+```sh
+dotnet run --project src/Replay -c Release -- <data-dir> 2026-10-27T16 2026-10-27T18 crossings.csv
+REPLAY_TRACE=10,902 dotnet run ...   # also writes every ping on those routes to crossings.csv.trace.csv
+```
+
+One row per (trip, checkpoint): `arrive_unix` is empty at a trip's first stop, `depart_unix` at its last.
+`*_gap_s` is the gap between the two pings a time was interpolated from; weight long gaps down.
+The replay prints matcher health (off-route, ambiguous, and *lost* pings, which should stay near zero) and implied segment speeds.
