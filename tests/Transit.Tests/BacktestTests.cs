@@ -109,7 +109,7 @@ public sealed class BacktestTests : IDisposable
     [InlineData(899, 3)]
     [InlineData(1799, 5)]
     [InlineData(5000, 6)]
-    public void BinsLeadTimes(double leadSeconds, int bin) => Assert.Equal(bin, MetroBiasCorrection.Bin(leadSeconds));
+    public void BinsLeadTimes(double leadSeconds, int bin) => Assert.Equal(bin, LeadTimeCorrection.Bin(leadSeconds));
 
     [Fact]
     public void CorrectionUsesRouteBinsWithEnoughSamplesElseAllRoutes()
@@ -117,7 +117,7 @@ public sealed class BacktestTests : IDisposable
         // Route A: 60 samples at ~10 min lead, buses 90 s later than predicted. Route B: 30 samples, 30 s later.
         var samples = Enumerable.Repeat(("A", 600.0, 90.0), 60).Concat(Enumerable.Repeat(("B", 600.0, 30.0), 30)).ToList();
 
-        var c = MetroBiasCorrection.Fit(samples);
+        var c = LeadTimeCorrection.Fit(samples);
 
         Assert.Equal(90, c.Correction("A", 610));
         Assert.Equal(90, c.Correction("B", 610));     // too few of its own; all-routes median (of 60x90, 30x30) is 90
@@ -129,7 +129,7 @@ public sealed class BacktestTests : IDisposable
     public void AppliesCorrectionByLeadTimeAtTheMomentOfReading()
     {
         var samples = Enumerable.Repeat(("A", 500.0, 60.0), 60).Concat(Enumerable.Repeat(("A", 60.0, 5.0), 60)); // 5-10 and 0-2 min bands
-        var c = MetroBiasCorrection.Fit(samples);
+        var c = LeadTimeCorrection.Fit(samples);
         var targets = new[] { new BacktestTarget("d", "t", 1, "s", "A", Actual) };
         var metro = new PredictionTable(1);
         var actual = Actual.ToUnixTimeSeconds();
@@ -168,7 +168,7 @@ public sealed class BacktestTests : IDisposable
         // with residual below +30 leave more than 60 s early; a 5% cap allows a shift of at most q05 + 60 = 15 s.
         var samples = Enumerable.Range(0, 301).Select(r => ("A", 600.0, r - 60.0)).ToList();
 
-        Assert.Equal(90, MetroBiasCorrection.Fit(samples).Correction("A", 600), 1e-9);
-        Assert.Equal(15, MetroBiasCorrection.Fit(samples, maxEarlyRate: 0.05).Correction("A", 600), 1e-9);
+        Assert.Equal(90, LeadTimeCorrection.Fit(samples).Correction("A", 600), 1e-9);
+        Assert.Equal(15, LeadTimeCorrection.Fit(samples, maxEarlyRate: 0.05).Correction("A", 600), 1e-9);
     }
 }

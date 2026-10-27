@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using Transit.Backtest;
+using Transit.Eta;
 using Transit.Gtfs;
 
 // Scores each predictor against observed departures, by how far ahead it was predicting.
@@ -89,18 +90,42 @@ var schedule = new PredictionTable(targets.Count);
 new SchedulePredictor(id => feeds.Resolve(id)?.Trip, zone).Fill(targets, schedule);
 
 var tables = new List<(string Name, PredictionTable Table)> { ("schedule", schedule), (tripUpdates.Name, metro) };
-var samples = MetroBiasCorrection.Samples(targets, metro, train).ToList();
-if (samples.Count > 0)
+// Learned corrections for any base predictor, fit on its errors in the training window. "+cap" shifts toward the
+// typical miss but never so far that more than 5% of training buses would leave early; metro+median is uncapped.
+void AddCorrected(string baseName, PredictionTable baseTable)
 {
-    // metro+bias is the candidate: shifted toward the typical miss, but never so far that more than 5% of buses leave early.
-    // metro+median is the unconstrained shift, kept to show what the cap costs and buys.
-    var safe = MetroBiasCorrection.Fit(samples, maxEarlyRate: 0.05);
-    tables.Add(("metro+bias", safe.Apply(targets, metro)));
-    tables.Add(("metro+median", MetroBiasCorrection.Fit(samples).Apply(targets, metro)));
-    Console.WriteLine($"  corrections learned from {samples.Count:N0} training predictions; {safe.RoutesWithOwnCorrection} routes have their own");
+    var samples = LeadTimeCorrection.Samples(targets, baseTable, train).ToList();
+    if (samples.Count == 0)
+    {
+        Console.WriteLine($"  {baseName}+cap skipped: no training predictions");
+        return;
+    }
+    tables.Add(($"{baseName}+cap", LeadTimeCorrection.Fit(samples, maxEarlyRate: 0.05).Apply(targets, baseTable)));
+    if (baseName == tripUpdates.Name)
+        tables.Add(("metro+median", LeadTimeCorrection.Fit(samples).Apply(targets, baseTable)));
 }
-else
-    Console.WriteLine("  metro+bias skipped: no training data before the test window");
+AddCorrected(tripUpdates.Name, metro);
+
+// v0/v1: medians learned only from crossings that ended before the test window; live state from anything knowable at query time.
+var history = CrossingHistory.Load(dbPath, trainFrom, testTo);
+var calendar = new ServiceCalendar(zone);
+bool InTraining(string serviceDate, double endUnix) =>
+    splitAt is { } cut ? endUnix < cut.ToUnixTimeSeconds() : string.CompareOrdinal(serviceDate, testFrom) < 0;
+var stats = SegmentStats.Build(history, calendar, InTraining);
+Console.WriteLine($"  v0 tables: {stats.TravelTable.Keys:N0} segments, {stats.DwellTable.Keys:N0} stops from {history.Trips:N0} trips ({clock.Elapsed.TotalSeconds:F0}s)");
+if (stats.TravelTable.Keys > 0)
+{
+    var pace = RecentPace.Build(history, stats);
+    foreach (var model in new[] { new SegmentEtaPredictor("v0-medians", stats, null, history, id => feeds.Resolve(id)?.Trip, zone),
+                 new SegmentEtaPredictor("v1-pace", stats, pace, history, id => feeds.Resolve(id)?.Trip, zone) })
+    {
+        var table = new PredictionTable(targets.Count);
+        model.Fill(targets, table);
+        tables.Add((model.Name, table));
+        AddCorrected(model.Name, table);
+        Console.WriteLine($"  scored {model.Name} ({clock.Elapsed.TotalSeconds:F0}s)");
+    }
+}
 
 var testTargets = test.Select(i => targets[i]).ToList();
 var scores = new List<Score>();

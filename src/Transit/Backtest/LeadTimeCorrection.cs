@@ -1,16 +1,17 @@
 namespace Transit.Backtest;
 
 /// <summary>
-/// Learns how far Metro Transit's predictions miss, as a function of what a rider's app knows when it reads one:
-/// the route and the lead time (predicted departure minus now). Their predictions are a feature; this only has
-/// to learn where they're wrong.
+/// Learns how far a predictor misses, as a function of what a rider's app knows when it reads a prediction:
+/// the route and the lead time (predicted departure minus now). Applied to Metro Transit's predictions it uses
+/// them as a feature and only learns where they're wrong; applied to our own models it calibrates them to the
+/// same early-departure budget so they can be compared fairly.
 /// <para>
 /// Shifting by the median residual minimizes absolute error but sends half of all buses out before the predicted
 /// time; on the first day's data the early rate went from ~6% to ~23%. With <c>maxEarlyRate</c> set, each bin's
 /// shift is capped so that at most that share of training buses would have left more than 60 s early.
 /// </para>
 /// </summary>
-public sealed class MetroBiasCorrection
+public sealed class LeadTimeCorrection
 {
     /// <summary>Upper edges of the lead-time bins, in minutes; the last bin is open-ended.</summary>
     public static readonly double[] LeadBinEdgesMinutes = [2, 5, 10, 15, 20, 30];
@@ -24,7 +25,7 @@ public sealed class MetroBiasCorrection
     readonly double[] _global;
     readonly Dictionary<string, double[]> _byRoute;
 
-    MetroBiasCorrection(double[] global, Dictionary<string, double[]> byRoute, int samples)
+    LeadTimeCorrection(double[] global, Dictionary<string, double[]> byRoute, int samples)
     {
         _global = global;
         _byRoute = byRoute;
@@ -48,7 +49,7 @@ public sealed class MetroBiasCorrection
 
     /// <param name="samples">Residual is actual minus predicted departure; lead is predicted departure minus the time the prediction was read.</param>
     /// <param name="maxEarlyRate">Cap on the training early rate after correction (e.g. 0.05), or null for the plain median shift.</param>
-    public static MetroBiasCorrection Fit(IEnumerable<(string RouteId, double LeadSeconds, double Residual)> samples, double? maxEarlyRate = null)
+    public static LeadTimeCorrection Fit(IEnumerable<(string RouteId, double LeadSeconds, double Residual)> samples, double? maxEarlyRate = null)
     {
         var bins = LeadBinEdgesMinutes.Length + 1;
         var global = Enumerable.Range(0, bins).Select(_ => new List<double>()).ToArray();
@@ -80,7 +81,7 @@ public sealed class MetroBiasCorrection
             if (routeBins.All(r => r.Count < MinRouteSamples)) continue;
             routeCorrection[route] = routeBins.Select((r, b) => r.Count >= MinRouteSamples ? Shift(r) : globalCorrection[b]).ToArray();
         }
-        return new MetroBiasCorrection(globalCorrection, routeCorrection, count);
+        return new LeadTimeCorrection(globalCorrection, routeCorrection, count);
     }
 
     public double Correction(string routeId, double leadSeconds)
