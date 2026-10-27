@@ -89,3 +89,16 @@ REPLAY_TRACE=10,902 dotnet run ...   # also writes every ping on those routes to
 One row per (trip, checkpoint): `arrive_unix` is empty at a trip's first stop, `depart_unix` at its last.
 `*_gap_s` is the gap between the two pings a time was interpolated from; weight long gaps down.
 The replay prints matcher health (off-route, ambiguous, and *lost* pings, which should stay near zero) and implied segment speeds.
+
+## Backtest
+
+Scores predictors against observed departures (the moment a bus leaves a stop's zone), by how far ahead they were predicting: 2, 5, 10, 15, 20 and 30 minutes.
+
+```sh
+dotnet run --project src/Backtest -c Release -- <data-dir> <crossings.db> 20261027 20261027 [per-route.csv]
+```
+
+- **Target is departure**, because that's what Metro Transit's TripUpdates publish (arrival times appear on ~2% of stop updates) and what a rider boards on. First and last stops and detoured crossings are excluded.
+- **Only the latest snapshot counts.** At each horizon a predictor's answer is what the newest TripUpdates snapshot said; if the trip had dropped out of it, there is no prediction. A latest snapshot more than 60 s old is treated as an archive gap.
+- **Contenders today:** the printed `schedule` and `metro-tripupdates`. New models implement `IPredictor` and are scored the same way.
+- **Metrics:** coverage, median and p90 absolute error, bias (mean of predicted minus actual), share within ±1 and ±2 minutes, and the *early* rate: the bus left more than 60 s before the predicted time.

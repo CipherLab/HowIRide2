@@ -94,6 +94,20 @@ public sealed class ArchiveFollower(string feedDir, TimeProvider clock, TimeSpan
         return new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, 0, 0, DateTimeKind.Utc);
     }
 
+    /// <summary>Every record fetched in [from, to], reading closed or open hour files; doesn't wait for more.</summary>
+    public static IEnumerable<RawRecord> ReadRange(string feedDir, DateTimeOffset from, DateTimeOffset to)
+    {
+        for (var hour = FloorHour(from); hour <= to; hour = hour.AddHours(1))
+        {
+            var stem = Path.Combine(feedDir, hour.ToString("yyyy-MM-dd"), hour.ToString("HH"));
+            var path = new[] { stem + RawArchiveWriter.ClosedExtension, stem + RawArchiveWriter.OpenExtension }.FirstOrDefault(File.Exists);
+            if (path is null) continue;
+            foreach (var record in RawArchiveReader.Read(path))
+                if (record.FetchedAt >= from && record.FetchedAt <= to)
+                    yield return record;
+        }
+    }
+
     /// <summary>Start of the earliest hour with any file, or null if the feed has no archive yet.</summary>
     public static DateTime? EarliestHour(string feedDir)
     {

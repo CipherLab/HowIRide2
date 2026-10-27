@@ -28,6 +28,8 @@ static class TestGtfs
             .. Enumerable.Range(0, 11).Select(i => $"S1,{Lat},{Lon(i)},{i + 1},{Dist(i):F1}")]);
         Table("stops.txt", ["stop_id,stop_name,stop_lat,stop_lon",
             $"A,\"West End, Farside\",{Lat},{Lon(0)}", $"B,Middle,{Lat},{Lon(2)}", $"C,East,{Lat},{Lon(10)}"]);
+        Table("agency.txt", ["agency_id,agency_name,agency_url,agency_timezone", "0,Test,https://example.com,America/Chicago"]);
+        Table("routes.txt", ["route_id,agency_id,route_short_name,route_type", "R,0,R,3"]);
         Table("trips.txt", ["route_id,service_id,trip_id,direction_id,shape_id", "R,1,T1,0,S1", "R,1,T2,0,S1"]);
         Table("stop_times.txt", ["trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled",
             .. new[] { "T1", "T2" }.SelectMany(t => new[] { $"{t},08:00:00,08:00:00,A,1,0", $"{t},08:05:00,08:05:00,B,2,{Dist(2):F1}", $"{t},08:10:00,08:10:00,C,3,{Dist(10):F1}" })]);
