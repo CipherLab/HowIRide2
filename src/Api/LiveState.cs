@@ -250,7 +250,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     public IEnumerable<object> Routes() =>
         _feeds.Feeds.SelectMany(f => f.Routes.Values).DistinctBy(r => r.Id).OrderBy(r => r.ShortName, StringComparer.Ordinal);
 
-    public StopView[] StopsIn(double south, double west, double north, double east, int limit = 600)
+    public StopView[] StopsIn(double south, double west, double north, double east, int limit = 4000)
     {
         lock (_gate)
             return _stopPatterns.Keys
