@@ -164,6 +164,16 @@ if (stats.TravelTable.Keys > 0)
         Console.WriteLine($"  scored {model.Name} ({clock.Elapsed.TotalSeconds:F0}s)");
     }
 
+    // v1-mean: the same v1 on tables of trimmed means (10% cut from each end), which add up along a trip where medians don't.
+    {
+        var meanStats = SegmentStats.Build(history, calendar, InTraining, trim: 0.1);
+        var model = new SegmentEtaPredictor("v1-mean", meanStats, RecentPace.Build(history, meanStats), history, Resolve, zone) { UseBlocks = true };
+        var table = new PredictionTable(targets.Count);
+        model.Fill(targets, table);
+        tables.Add((model.Name, table));
+        Console.WriteLine($"  scored {model.Name} ({clock.Elapsed.TotalSeconds:F0}s)");
+    }
+
     // Learning curve: the same v1 with its history tables built from a stable random share of the training trips.
     // Today's pace still sees every bus, as it would live; only how much history the medians rest on changes.
     if (opts.ContainsKey("learning-curve"))
@@ -204,7 +214,8 @@ foreach (var (name, table) in tables)
 if (tables.FindIndex(t => t.Name == "v1-pace") is var oi and >= 0)
 {
     var oursTable = tables[oi].Table;
-    Console.WriteLine("\nBUS by trip state   (median |err| s: metro / v1-pace)");
+    var meanTable = tables.Find(t => t.Name == "v1-mean").Table;
+    Console.WriteLine($"\nBUS by trip state   (median |err| s: metro / v1-pace{(meanTable is null ? "" : " / v1-mean")})");
     for (var h = 0; h < Horizons.Minutes.Length; h++)
     {
         var groups = test.Where(i => Mode(targets[i]) == "bus").GroupBy(i =>
@@ -215,7 +226,7 @@ if (tables.FindIndex(t => t.Name == "v1-pace") is var oi and >= 0)
         foreach (var g in groups.OrderBy(g => g.Key))
         {
             double Med(PredictionTable table) => Median(g.Select(i => Math.Abs(table[i, h] - targets[i].Actual.ToUnixTimeSeconds())).Where(double.IsFinite));
-            Console.WriteLine($"  {Horizons.Minutes[h],2} min  {g.Key,-12} {g.Count(),7:N0} ({100.0 * g.Count() / test.Count,3:F0}%)   {Med(metro),5:F0} / {Med(oursTable),5:F0}");
+            Console.WriteLine($"  {Horizons.Minutes[h],2} min  {g.Key,-12} {g.Count(),7:N0} ({100.0 * g.Count() / test.Count,3:F0}%)   {Med(metro),5:F0} / {Med(oursTable),5:F0}{(meanTable is null ? "" : $" / {Med(meanTable),5:F0}")}");
         }
     }
 }

@@ -113,11 +113,12 @@ button {
   font-size: 22px;
   letter-spacing: 0.04em;
   color: var(--amber);
+  white-space: nowrap;
 }
 
 .nav {
   display: flex;
-  gap: 4px;
+  gap: 2px;
 }
 
 .nav button,
@@ -136,6 +137,115 @@ button {
 .back:hover {
   color: var(--snow);
   background: rgb(243 246 247 / 0.12);
+}
+
+.nav .collapse {
+  padding: 2px 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* ---- Folded panel: a spine down the left edge (a bar along the bottom on phones) ---- */
+
+.rail {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 12px;
+  background: var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 2;
+}
+
+.rail button {
+  border: 0;
+  background: transparent;
+  color: rgb(243 246 247 / 0.7);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.rail button:hover,
+.rail .rail-tab[aria-current='page'] {
+  color: var(--snow);
+  background: rgb(243 246 247 / 0.12);
+}
+
+.rail-open {
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* Spine labels read bottom to top, like a book on a shelf. */
+.rail-tab,
+.rail-mark {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.rail-tab {
+  padding: 10px 6px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.rail-mark {
+  margin-top: auto;
+  font-family: var(--font-board);
+  font-weight: 900;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+}
+
+@media (max-width: 720px) {
+  .rail {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: calc(48px + env(safe-area-inset-bottom));
+    flex-direction: row;
+    padding: 0 8px env(safe-area-inset-bottom) 16px;
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+
+  .rail-tab,
+  .rail-mark {
+    writing-mode: horizontal-tb;
+    transform: none;
+  }
+
+  .rail-tab {
+    padding: 6px 10px;
+  }
+
+  /* The sheet folds down and opens up; the chevrons say so. */
+  .nav .collapse span {
+    display: inline-block;
+    transform: rotate(-90deg);
+  }
+
+  /* Chevron at the far end, pointing up. */
+  .rail-open {
+    order: 1;
+    transform: rotate(-90deg);
+  }
+
+  .rail-mark {
+    order: -1;
+    margin: 0 auto 0 0;
+  }
 }
 
 .head-actions {

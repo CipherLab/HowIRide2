@@ -30,6 +30,16 @@ public sealed class EtaTests : IDisposable
         Assert.Null(m.Get("other", DayType.Weekday, 40));
     }
 
+    [Fact]
+    public void TrimmedMeansKeepTheSlowRunsAMedianIgnoresButNotTheWorstOne()
+    {
+        var m = new SlotMedians(trim: 0.1);
+        foreach (var v in new[] { 10.0, 10, 10, 10, 10, 10, 10, 40, 40, 900 }) m.Add("seg", DayType.Weekday, 40, v);
+        m.Build();
+
+        Assert.Equal(17.5, m.Get("seg", DayType.Weekday, 40)); // drops one 10 and the 900; the median would say 10
+    }
+
     static SegmentStats Stats(params (string Key, double Seconds)[] travel)
     {
         var t = new SlotMedians();

@@ -31,7 +31,11 @@ public sealed class ServiceCalendar(TimeZoneInfo zone)
 /// Historical medians per key (a segment, or a stop for dwell) by day type and 15-minute slot: the v0 lookup table.
 /// Sparse cells fall back to nearby slots, then the whole day type, then all days.
 /// </summary>
-public sealed class SlotMedians
+/// <param name="trim">
+/// When set, each cell holds a mean with this share cut from each end instead of a median. Medians don't add up:
+/// summed over many short segments they drop each one's occasional slow run, so long trips come out short. Means add.
+/// </param>
+public sealed class SlotMedians(double? trim = null)
 {
     /// <summary>Samples a cell needs before its median is trusted.</summary>
     public const int MinSamples = 3;
@@ -61,20 +65,20 @@ public sealed class SlotMedians
         list.Add(value);
     }
 
-    /// <summary>Computes medians from everything added. Call once after the last Add.</summary>
+    /// <summary>Computes medians (or trimmed means) from everything added. Call once after the last Add.</summary>
     public SlotMedians Build()
     {
         foreach (var p in _profiles.Values)
         {
             foreach (var (cell, values) in p.Raw)
-                p.Cells[cell] = (Median(values), values.Count);
+                p.Cells[cell] = (Typical(values), values.Count);
             for (var d = 0; d < 3; d++)
             {
                 var day = p.Raw.Where(kv => kv.Key / ServiceCalendar.SlotsPerDay == d).SelectMany(kv => kv.Value).ToList();
-                p.ByDayType[d] = day.Count > 0 ? (Median(day), day.Count) : (double.NaN, 0);
+                p.ByDayType[d] = day.Count > 0 ? (Typical(day), day.Count) : (double.NaN, 0);
             }
             var all = p.Raw.Values.SelectMany(v => v).ToList();
-            p.All = (Median(all), all.Count);
+            p.All = (Typical(all), all.Count);
             p.Raw.Clear();
         }
         return this;
@@ -98,10 +102,15 @@ public sealed class SlotMedians
         return p.All.N > 0 ? p.All.Median : null;
     }
 
-    static double Median(List<double> values)
+    double Typical(List<double> values)
     {
         values.Sort();
         var n = values.Count;
+        if (trim is { } share)
+        {
+            var cut = (int)(n * share);
+            return values.Skip(cut).Take(n - 2 * cut).Average();
+        }
         return n % 2 == 1 ? values[n / 2] : (values[n / 2 - 1] + values[n / 2]) / 2;
     }
 }
@@ -117,13 +126,13 @@ public sealed class SegmentStats(SlotMedians travel, SlotMedians dwell, ServiceC
     public double? Dwell(string stopCheckpoint, DayType dayType, double atUnix) => dwell.Get(stopCheckpoint, dayType, calendar.SlotOf(atUnix));
 
     /// <summary>Learns from history the caller has judged to be in the past (the training window).</summary>
-    public static SegmentStats Build(CrossingHistory history, ServiceCalendar calendar, Func<string, double, bool> include)
+    public static SegmentStats Build(CrossingHistory history, ServiceCalendar calendar, Func<string, double, bool> include, double? trim = null)
     {
-        var travel = new SlotMedians();
+        var travel = new SlotMedians(trim);
         foreach (var o in history.Segments())
             if (include(o.ServiceDate, o.End))
                 travel.Add(o.Segment, ServiceCalendar.DayTypeOf(o.ServiceDate), calendar.SlotOf(o.Start), o.Travel);
-        var dwell = new SlotMedians();
+        var dwell = new SlotMedians(trim);
         foreach (var (cp, date, arrive, seconds) in history.Dwells())
             if (include(date, arrive + seconds))
                 dwell.Add(cp, ServiceCalendar.DayTypeOf(date), calendar.SlotOf(arrive), seconds);
