@@ -441,6 +441,31 @@ button.row:hover {
   color: var(--slate);
 }
 
+/* The three times under a trip: each behind its timeline mark, ours first and heaviest. */
+.times {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.times .t {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.times .t.ours {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.mark {
+  flex: none;
+  overflow: visible;
+}
+
 .late {
   color: var(--amber-deep);
 }

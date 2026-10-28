@@ -49,6 +49,68 @@ const MARK = {
   ours: { color: '#F2A900' },
 }
 
+type Source = 'ours' | 'metro' | 'schedule'
+
+/** The mark each source has on the timeline, small enough to sit in a line of text. */
+export function Mark({ kind }: { kind: Source }) {
+  if (kind === 'schedule')
+    return (
+      <svg className="mark" width="4" height="14" aria-hidden="true">
+        <line x1="2" x2="2" y1="0" y2="14" stroke={MARK.schedule.color} strokeWidth="2" />
+      </svg>
+    )
+  return (
+    <svg className="mark" width="12" height="14" aria-hidden="true">
+      {kind === 'ours' ? (
+        <circle cx="6" cy="7" r="5" fill={MARK.ours.color} stroke="#B37D00" />
+      ) : (
+        <circle cx="6" cy="7" r="5" fill="#F3F6F7" stroke={MARK.metro.color} strokeWidth="2" />
+      )}
+    </svg>
+  )
+}
+
+/** Clock time without AM/PM: three of them share a line, and they're all within the next hour or so. */
+function shortClock(t: number) {
+  return new Date(t * 1000)
+    .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    .replace(/\s?[AaPp]\.?[Mm]\.?$/, '')
+}
+
+/** Our estimate, Metro Transit's and the timetable's, each behind its timeline mark, then how ours compares to the timetable. */
+export function Times({ ours, metro, scheduled }: { ours: number | null; metro: number | null; scheduled: number | null }) {
+  const label = [
+    ours != null && `Ours ${clock(ours)}`,
+    metro != null && `Metro Transit ${clock(metro)}`,
+    scheduled != null && `Timetable ${clock(scheduled)}`,
+  ]
+    .filter(Boolean)
+    .join(', ')
+  return (
+    <span className="times" aria-label={label}>
+      {ours != null && (
+        <span className="t ours" title={`Our estimate ${clock(ours)}`}>
+          <Mark kind="ours" />
+          {shortClock(ours)}
+        </span>
+      )}
+      {metro != null && (
+        <span className="t" title={`Metro Transit's estimate ${clock(metro)}`}>
+          <Mark kind="metro" />
+          {shortClock(metro)}
+        </span>
+      )}
+      {scheduled != null && (
+        <span className="t" title={`Timetable ${clock(scheduled)}`}>
+          <Mark kind="schedule" />
+          {shortClock(scheduled)}
+        </span>
+      )}
+      {ours != null && <VsSchedule at={ours} scheduled={scheduled} />}
+    </span>
+  )
+}
+
 /**
  * The signature: where each predictor puts this departure on a shared minutes-from-now axis.
  * Timetable tick, Metro Transit's hollow ring, our amber dot. Agreement is a cluster; disagreement is visible.
@@ -97,21 +159,15 @@ export function TimelineLegend({ span }: { span: number }) {
   return (
     <div className="legend">
       <span>
-        <svg width="12" height="14">
-          <circle cx="6" cy="7" r="5" fill="#F2A900" stroke="#B37D00" />
-        </svg>
+        <Mark kind="ours" />
         Ours
       </span>
       <span>
-        <svg width="12" height="14">
-          <circle cx="6" cy="7" r="5" fill="#F3F6F7" stroke="#14212B" strokeWidth="2" />
-        </svg>
+        <Mark kind="metro" />
         Metro Transit
       </span>
       <span>
-        <svg width="4" height="14">
-          <line x1="2" x2="2" y1="0" y2="14" stroke="#7A8A96" strokeWidth="2" />
-        </svg>
+        <Mark kind="schedule" />
         Timetable
       </span>
       <span>Next {Math.round(span / 60)} min</span>

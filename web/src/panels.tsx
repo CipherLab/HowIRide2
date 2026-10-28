@@ -2,21 +2,21 @@ import { useQuery } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
 import { api, bestEstimate, type Score } from './api'
 import {
-  clock,
   Countdown,
   paceWords,
   RouteBadge,
   spanFor,
   Timeline,
   TimelineLegend,
+  Times,
   useNow,
-  VsSchedule,
 } from './components'
 import type { LiveVehicles } from './live'
 import { ARROW_PATH, ARROW_VIEWBOX, STOP_PATH, STOP_VIEWBOX } from './vehicleIcon'
 import type { Selection } from './MapView'
 
-const SOURCE_LABEL = { ours: 'our estimate', metro: "Metro Transit's estimate", schedule: 'timetable' }
+/** Under the countdown when it isn't ours: whose time it is instead. */
+const SOURCE_LABEL = { ours: '', metro: 'Metro', schedule: 'timetable' }
 
 export function useLive(live: LiveVehicles) {
   return useSyncExternalStore(
@@ -142,10 +142,13 @@ export function VehiclePanel({ id, live, onSelect }: { id: string; live: LiveVeh
                     <span className="what" style={{ gridColumn: '1 / 3' }}>
                       <strong>{s.name}</strong>
                       <small>
-                        {best ? clock(best.time) : '–'} {best && <VsSchedule at={best.time} scheduled={s.scheduled} />}
+                        <Times ours={s.v1 ?? s.v0} metro={s.metro} scheduled={s.scheduled} />
                       </small>
                     </span>
-                    <span className="when">{best && <Countdown at={best.time} now={now} />}</span>
+                    <span className="when">
+                      {best && <Countdown at={best.time} now={now} />}
+                      {best && best.source !== 'ours' && <span className="source">{SOURCE_LABEL[best.source]}</span>}
+                    </span>
                     <Timeline now={now} span={span} scheduled={s.scheduled} metro={s.metro} ours={s.v1 ?? s.v0} />
                   </button>
                 </li>
@@ -183,12 +186,12 @@ export function StopPanel({ id, onSelect }: { id: string; onSelect: (s: Selectio
                 <span className="what">
                   <strong>{d.headsign}</strong>
                   <small>
-                    {clock(best.time)} · <VsSchedule at={best.time} scheduled={d.scheduled} />
-                    {best.source !== 'ours' && ` · ${SOURCE_LABEL[best.source]}`}
+                    <Times ours={d.v1 ?? d.v0} metro={d.metro} scheduled={d.scheduled} />
                   </small>
                 </span>
                 <span className="when">
                   <Countdown at={best.time} now={now} />
+                  {best.source !== 'ours' && <span className="source">{SOURCE_LABEL[best.source]}</span>}
                 </span>
                 <Timeline now={now} span={span} scheduled={d.scheduled} metro={d.metro} ours={d.v1 ?? d.v0} />
               </button>
