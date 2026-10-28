@@ -437,10 +437,203 @@ table.scores td.best {
   background: rgb(242 169 0 / 0.16);
 }
 
-.chart text {
+table.scores tr.headline td:first-child {
+  font-weight: 600;
+}
+
+/* ---- Head to head: ours (amber) vs Metro (ink) on a shared minutes scale ---- */
+
+.verdict {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.h2h-legend {
+  margin-bottom: 8px;
+}
+
+.h2h-legend .dot,
+.h2h-legend .tick {
+  position: static;
+  transform: none;
+}
+
+.h2h .dot,
+.h2h-legend .dot {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--snow);
+}
+
+.dot.ours {
+  background: var(--amber);
+}
+
+.dot.metro {
+  background: var(--ink);
+}
+
+.h2h-legend .tick,
+.h2h .tick {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--slate);
+  opacity: 0.6;
+}
+
+.h2h-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 32px 40px;
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  border-bottom: 1px solid var(--rule);
   font-family: var(--font-data);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.h2h-row > :nth-child(n + 3) {
+  text-align: right;
+}
+
+.h2h-head {
+  min-height: 22px;
+  font-family: var(--font-text);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--slate);
+}
+
+.h2h .track {
+  position: relative;
+  height: 28px;
+}
+
+/* Ours rides the upper lane and Metro the lower, so equal scores stack instead of hiding each other. */
+.h2h-row:not(.h2h-head):not(.h2h-axis) .track::before,
+.h2h-row:not(.h2h-head):not(.h2h-axis) .track::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--rule);
+}
+
+.h2h-row:not(.h2h-head):not(.h2h-axis) .track::before {
+  top: 28%;
+}
+
+.h2h-row:not(.h2h-head):not(.h2h-axis) .track::after {
+  top: 72%;
+}
+
+.h2h .track > i {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+}
+
+.h2h .track > .dot.ours {
+  top: 28%;
+}
+
+.h2h .track > .dot.metro {
+  top: 72%;
+}
+
+.h2h .track > .tick {
+  top: 50%;
+  height: 100%;
+}
+
+.h2h-row .better {
+  font-weight: 700;
+}
+
+.h2h-axis {
+  border-bottom: 0;
+  min-height: 20px;
+  color: var(--slate);
   font-size: 11px;
-  fill: var(--slate);
+}
+
+.h2h-axis .axis-unit {
+  grid-column: span 2;
+}
+
+.h2h-axis small {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  font-size: 11px;
+}
+
+.sub {
+  margin: 18px 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.early-bars {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.early-row {
+  display: grid;
+  grid-template-columns: 104px 1fr 40px;
+  gap: 10px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.early-row b {
+  font-family: var(--font-data);
+  text-align: right;
+}
+
+.bar-track {
+  height: 12px;
+  background: var(--rule);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+}
+
+.bar.ours {
+  background: var(--amber);
+}
+
+.bar.metro {
+  background: var(--ink);
+}
+
+.fineprint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--slate);
+}
+
+details.more summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+details.more[open] summary {
+  margin-bottom: 8px;
 }
 
 .maplibregl-ctrl-attrib {

@@ -205,23 +205,23 @@ function LiveFooter({ live }: { live: LiveVehicles }) {
   return null
 }
 
+/** What the app shows (OURS) against what Metro's own app shows (METRO), with the timetable for scale. */
+const OURS = 'v1-pace'
+const METRO = 'metro-tripupdates'
+const SCHEDULE = 'schedule'
+
 const PREDICTOR_LABEL: Record<string, string> = {
-  schedule: 'Timetable',
-  'metro-tripupdates': 'Metro Transit',
-  'metro-tripupdates+cap': 'Metro, corrected',
-  'metro+median': 'Metro, median shift',
-  'v0-medians': 'v0 medians',
-  'v0-medians+cap': 'v0, capped',
-  'v1-pace': 'v1 pace',
-  'v1-pace+cap': 'v1, capped',
+  [OURS]: 'Ours (in the app)',
+  [METRO]: 'Metro Transit',
+  [SCHEDULE]: 'Timetable',
+  'v0-medians': 'Ours, older model',
+  'v1-pace+cap': 'Ours, shifted*',
+  'v0-medians+cap': 'Older, shifted*',
+  'metro-tripupdates+cap': 'Metro, shifted*',
 }
 
-const CHART_COLORS: Record<string, string> = {
-  schedule: '#7A8A96',
-  'metro-tripupdates': '#14212B',
-  'v1-pace': '#F2A900',
-  'v0-medians': '#2E8BC0',
-}
+/** Differences smaller than this are noise between test days; call them even. */
+const TIE_S = 5
 
 export function Scorecard() {
   const scores = useQuery({ queryKey: ['scores'], queryFn: api.scores, refetchInterval: 300_000 })
@@ -230,11 +230,59 @@ export function Scorecard() {
   const latest = runs.length ? runs[runs.length - 1].runAt : null
   const rows = runs.filter((r) => r.runAt === latest && r.group === 'bus')
   const horizons = [...new Set(rows.map((r) => r.horizon))].sort((a, b) => a - b)
-  const predictors = [...new Set(rows.map((r) => r.predictor))].filter((p) => p !== 'metro+median')
+  const predictors = Object.keys(PREDICTOR_LABEL).filter((p) => rows.some((r) => r.predictor === p))
   const cell = (p: string, h: number) => rows.find((r) => r.predictor === p && r.horizon === h)
   const h = health.data
   return (
     <>
+      <div className="section">
+        <h2>Ours vs Metro Transit, buses</h2>
+        {rows.length === 0 ? (
+          <p className="hint">No scores yet. The nightly backtest writes them after each service day.</p>
+        ) : (
+          <HeadToHead rows={rows} horizons={horizons} />
+        )}
+      </div>
+      {rows.length > 0 && (
+        <div className="section">
+          <details className="more">
+            <summary>Every predictor we test</summary>
+            <p className="hint">
+              Typical miss in minutes. Highlighted: closest in each column. “Left early” is how often the bus left more than a
+              minute before the predicted time, 10 minutes out. *Shifted: nudged by the typical miss on earlier days; still
+              being tuned.
+            </p>
+            <table className="scores">
+              <thead>
+                <tr>
+                  <th>Predictor</th>
+                  {horizons.map((h) => (
+                    <th key={h}>{h} min</th>
+                  ))}
+                  <th>Left early</th>
+                </tr>
+              </thead>
+              <tbody>
+                {predictors.map((p) => (
+                  <tr key={p} className={p === OURS || p === METRO ? 'headline' : undefined}>
+                    <td>{PREDICTOR_LABEL[p]}</td>
+                    {horizons.map((h) => {
+                      const s = cell(p, h)
+                      const best = Math.min(...predictors.map((q) => cell(q, h)?.medianAbs ?? Infinity))
+                      return (
+                        <td key={h} className={s?.medianAbs === best ? 'best' : undefined}>
+                          {s?.medianAbs != null ? (s.medianAbs / 60).toFixed(1) : '–'}
+                        </td>
+                      )
+                    })}
+                    <td>{fmtPct(cell(p, 10)?.early)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </div>
+      )}
       <div className="section">
         <h2>Right now</h2>
         {h ? (
@@ -260,48 +308,6 @@ export function Scorecard() {
           <p className="hint">Loading…</p>
         )}
       </div>
-      <div className="section">
-        <h2>Typical error by how far ahead, buses</h2>
-        {rows.length === 0 ? (
-          <p className="hint">No scores yet. The nightly backtest writes them after each service day.</p>
-        ) : (
-          <>
-            <p className="hint">
-              Median minutes off, latest run (test {rows[0].testFrom.slice(0, 16)}). Highlighted: best in each column. Early is the
-              share of buses that left more than a minute before the predicted time.
-            </p>
-            <ErrorChart rows={rows} horizons={horizons} />
-            <table className="scores">
-              <thead>
-                <tr>
-                  <th>Predictor</th>
-                  {horizons.map((h) => (
-                    <th key={h}>{h} min</th>
-                  ))}
-                  <th>Early at 10 min</th>
-                </tr>
-              </thead>
-              <tbody>
-                {predictors.map((p) => (
-                  <tr key={p}>
-                    <td>{PREDICTOR_LABEL[p] ?? p}</td>
-                    {horizons.map((h) => {
-                      const s = cell(p, h)
-                      const best = Math.min(...predictors.map((q) => cell(q, h)?.medianAbs ?? Infinity))
-                      return (
-                        <td key={h} className={s?.medianAbs === best ? 'best' : undefined}>
-                          {s?.medianAbs != null ? (s.medianAbs / 60).toFixed(1) : '–'}
-                        </td>
-                      )
-                    })}
-                    <td>{fmtPct(cell(p, 10)?.early)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        )}
-      </div>
     </>
   )
 }
@@ -310,49 +316,143 @@ function fmtPct(v: number | null | undefined) {
   return v == null ? '–' : `${(v * 100).toFixed(0)}%`
 }
 
-function ErrorChart({ rows, horizons }: { rows: Score[]; horizons: number[] }) {
-  const W = 360
-  const H = 170
-  const pad = { l: 30, r: 10, t: 10, b: 22 }
-  const charted = rows.filter((r) => r.predictor in CHART_COLORS && r.medianAbs != null)
-  const maxMinutes = Math.max(1, Math.ceil(Math.max(...charted.map((r) => r.medianAbs!)) / 60))
-  const x = (h: number) => pad.l + ((h - horizons[0]) / (horizons[horizons.length - 1] - horizons[0] || 1)) * (W - pad.l - pad.r)
-  const y = (seconds: number) => H - pad.b - (seconds / (maxMinutes * 60)) * (H - pad.t - pad.b)
+function fmtMinutes(seconds: number) {
+  return `${(seconds / 60).toFixed(1)} min`
+}
+
+/** The backtest records service dates (yyyyMMdd, inclusive) or, for a split run, the instant the test began. */
+function testWindow(from: string, to: string) {
+  const fmt = (v: string) =>
+    /^\d{8}$/.test(v)
+      ? new Date(+v.slice(0, 4), +v.slice(4, 6) - 1, +v.slice(6, 8)).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+      : new Date(v).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  if (from === to) return `on ${fmt(from)}`
+  return /^\d{8}$/.test(from) ? `${fmt(from)} through ${fmt(to)}` : `from ${fmt(from)} through the end of that service day`
+}
+
+function listMinutes(hs: number[]) {
+  return hs.length > 1 ? `${hs.slice(0, -1).join(', ')} and ${hs[hs.length - 1]} min` : `${hs[0]} min`
+}
+
+/**
+ * One row per horizon: how far off our estimate and Metro's typically were, as dots in two lanes on a shared
+ * minute scale (so a tie shows as one dot above the other), with the timetable's miss as a tick for reference.
+ */
+function HeadToHead({ rows, horizons }: { rows: Score[]; horizons: number[] }) {
+  const at = (p: string, h: number) => rows.find((r) => r.predictor === p && r.horizon === h)?.medianAbs ?? null
+  const pairs = horizons
+    .map((h) => ({ h, ours: at(OURS, h), metro: at(METRO, h), schedule: at(SCHEDULE, h) }))
+    .filter((r): r is { h: number; ours: number; metro: number; schedule: number | null } => r.ours != null && r.metro != null)
+  if (pairs.length === 0) return <p className="hint">This run has no scores for our estimate or Metro’s.</p>
+
+  const maxMinutes = Math.ceil(Math.max(...pairs.flatMap((p) => [p.ours, p.metro, p.schedule ?? 0])) / 60)
+  const pos = (seconds: number) => `${(100 * seconds) / (maxMinutes * 60)}%`
+  const oursCloser = pairs.filter((p) => p.ours < p.metro - TIE_S).map((p) => p.h)
+  const metroCloser = pairs.filter((p) => p.metro < p.ours - TIE_S).map((p) => p.h)
+  const verdict =
+    oursCloser.length === 0 && metroCloser.length === 0
+      ? `Even. At every distance, ours and Metro’s typical miss are within ${TIE_S} seconds of each other.`
+      : [
+          oursCloser.length ? `Ours is closer ${listMinutes(oursCloser)} out.` : '',
+          metroCloser.length ? `Metro’s is closer ${listMinutes(metroCloser)} out.` : '',
+          oursCloser.length + metroCloser.length < pairs.length ? `Elsewhere they’re within ${TIE_S} seconds.` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+
+  const early = (p: string) => rows.find((r) => r.predictor === p && r.horizon === 10)?.early ?? null
+  const oursEarly = early(OURS)
+  const metroEarly = early(METRO)
+  const sample = rows.find((r) => r.predictor === OURS)
+
   return (
     <>
-      <svg className="chart" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Median error in minutes by how far ahead the prediction was made">
-        {Array.from({ length: maxMinutes + 1 }, (_, m) => (
-          <g key={m}>
-            <line x1={pad.l} x2={W - pad.r} y1={y(m * 60)} y2={y(m * 60)} stroke="#D9E1E6" />
-            <text x={pad.l - 6} y={y(m * 60) + 4} textAnchor="end">
-              {m}m
-            </text>
-          </g>
-        ))}
-        {horizons.map((h) => (
-          <text key={h} x={x(h)} y={H - 6} textAnchor="middle">
-            {h}
-          </text>
-        ))}
-        {Object.entries(CHART_COLORS).map(([p, color]) => {
-          const pts = horizons
-            .map((h) => charted.find((r) => r.predictor === p && r.horizon === h))
-            .filter((r): r is Score => r != null)
-            .map((r) => `${x(r.horizon)},${y(r.medianAbs!)}`)
-          return pts.length ? <polyline key={p} points={pts.join(' ')} fill="none" stroke={color} strokeWidth={p === 'v1-pace' ? 3 : 2} /> : null
-        })}
-      </svg>
-      <div className="legend" style={{ margin: '4px 0 10px' }}>
-        {Object.entries(CHART_COLORS).map(([p, color]) => (
-          <span key={p}>
-            <svg width="14" height="4">
-              <line x1="0" x2="14" y1="2" y2="2" stroke={color} strokeWidth="3" />
-            </svg>
-            {PREDICTOR_LABEL[p]}
-          </span>
-        ))}
-        <span>Minutes ahead →</span>
+      <p className="verdict">{verdict}</p>
+      <div className="legend h2h-legend">
+        <span>
+          <i className="dot ours" /> Ours
+        </span>
+        <span>
+          <i className="dot metro" /> Metro Transit
+        </span>
+        <span>
+          <i className="tick" /> Timetable
+        </span>
       </div>
+      <div className="h2h" role="table" aria-label="Typical miss by how far ahead the estimate was made">
+        <div className="h2h-row h2h-head" role="row">
+          <span role="columnheader">Ahead</span>
+          <span role="columnheader">Typical miss</span>
+          <span role="columnheader">Ours</span>
+          <span role="columnheader">Metro</span>
+        </div>
+        {pairs.map((p) => {
+          const diff = p.ours - p.metro
+          const even = Math.abs(diff) <= TIE_S
+          return (
+            <div className="h2h-row" role="row" key={p.h}>
+              <span role="rowheader">{p.h} min</span>
+              <span
+                className="track"
+                role="cell"
+                aria-label={`Ours ${fmtMinutes(p.ours)}, Metro ${fmtMinutes(p.metro)}${p.schedule != null ? `, timetable ${fmtMinutes(p.schedule)}` : ''}`}
+              >
+                {p.schedule != null && <i className="tick" style={{ left: pos(p.schedule) }} />}
+                <i className="dot metro" style={{ left: pos(p.metro) }} />
+                <i className="dot ours" style={{ left: pos(p.ours) }} />
+              </span>
+              <span role="cell" className={!even && diff < 0 ? 'better' : undefined}>
+                {(p.ours / 60).toFixed(1)}
+              </span>
+              <span role="cell" className={!even && diff > 0 ? 'better' : undefined}>
+                {(p.metro / 60).toFixed(1)}
+              </span>
+            </div>
+          )
+        })}
+        <div className="h2h-row h2h-axis" aria-hidden="true">
+          <span />
+          <span className="track">
+            {Array.from({ length: maxMinutes + 1 }, (_, m) => (
+              <small key={m} style={{ left: pos(m * 60) }}>
+                {m}
+              </small>
+            ))}
+          </span>
+          <span className="axis-unit">min off</span>
+        </div>
+      </div>
+      {oursEarly != null && metroEarly != null && (
+        <>
+          <h3 className="sub">Bus gone before the time shown</h3>
+          <p className="hint">
+            The miss that strands you: how often the bus left more than a minute before the predicted time, 10 minutes out.
+          </p>
+          <div className="early-bars">
+            {[
+              { label: 'Ours', v: oursEarly, cls: 'ours' },
+              { label: 'Metro Transit', v: metroEarly, cls: 'metro' },
+            ].map((b) => (
+              <div key={b.cls} className="early-row">
+                <span>{b.label}</span>
+                <span className="bar-track">
+                  <i className={`bar ${b.cls}`} style={{ width: `${(100 * b.v) / Math.max(oursEarly, metroEarly, 0.01)}%` }} />
+                </span>
+                <b>{fmtPct(b.v)}</b>
+              </div>
+            ))}
+          </div>
+          {oursEarly > metroEarly + 0.02 && (
+            <p className="hint">Ours tells people they have longer than they do more often than Metro’s does. That’s the next thing to fix.</p>
+          )}
+        </>
+      )}
+      {sample && (
+        <p className="fineprint">
+          Typical miss is the median: half the estimates were closer than this. Tested on {sample.predicted.toLocaleString()} bus
+          predictions at each distance, {testWindow(sample.testFrom, sample.testTo)}.
+        </p>
+      )}
     </>
   )
 }
