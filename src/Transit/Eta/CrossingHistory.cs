@@ -43,6 +43,10 @@ public sealed class CrossingHistory
     /// <summary>This trip's crossings ordered by checkpoint index, or empty.</summary>
     public CrossingRow[] Trip(string serviceDate, string tripId) => _byTrip.GetValueOrDefault((serviceDate, tripId)) ?? [];
 
+    /// <summary>The trips <paramref name="keep"/> (service date, trip id) accepts.</summary>
+    public CrossingHistory Where(Func<string, string, bool> keep) =>
+        new(_byTrip.Where(kv => keep(kv.Key.Date, kv.Key.Trip)).ToDictionary(kv => kv.Key, kv => kv.Value));
+
     public static CrossingHistory From(IEnumerable<CrossingRow> rows) =>
         new(rows.OrderBy(r => r.Index).GroupBy(x => (x.ServiceDate, x.TripId)).ToDictionary(g => g.Key, g => g.ToArray()));
 

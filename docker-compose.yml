@@ -42,6 +42,22 @@ services:
       - ./derived:/derived
     logging: *logging
 
+  # Experiment: the same detection with checkpoints on a shared map grid (see CheckpointBuilder.Mode), into its own
+  # database, so both layouts are scored on the same days. Score it with TRANSIT_CHECKPOINTS=grid and --db crossings-grid.db.
+  detect-grid:
+    build:
+      context: .
+      args: { PROJECT: Detect }
+    restart: unless-stopped
+    environment:
+      TRANSIT_CHECKPOINTS: grid
+      Detect__DataDir: /data
+      Detect__DbPath: /derived/crossings-grid.db
+    volumes:
+      - ./data:/data:ro
+      - ./derived:/derived
+    logging: *logging
+
   # Live map and predictions for the LAN: http://<node>:8080
   api:
     build:

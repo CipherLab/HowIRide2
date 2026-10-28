@@ -11,12 +11,12 @@ public sealed record StopPoint(string StopId, int Sequence, double Dist);
 /// A distinct (shape, stop list) combination. Thousands of trips share a few hundred patterns,
 /// so geometry and checkpoints are built once per pattern rather than per trip.
 /// </summary>
-public sealed class Pattern(string shapeId, Polyline shape, StopPoint[] stops)
+public sealed class Pattern(string shapeId, Polyline shape, StopPoint[] stops, ShapeGeometry? geometry = null)
 {
     public string ShapeId { get; } = shapeId;
     public Polyline Shape { get; } = shape;
     public StopPoint[] Stops { get; } = stops;
-    public Checkpoint[] Checkpoints { get; } = CheckpointBuilder.Build(stops);
+    public Checkpoint[] Checkpoints { get; } = CheckpointBuilder.Build(stops, geometry);
 }
 
 /// <param name="FeedVersion">Which static GTFS file this trip came from, recorded with each crossing.</param>
@@ -158,7 +158,7 @@ public sealed class StaticFeed
             var stops = ResolveStopDistances(times, shape, stopCoords);
             var key = trip.Shape + "|" + string.Join(";", stops.Select(s => $"{s.StopId}@{s.Dist:F1}"));
             if (!patterns.TryGetValue(key, out var pattern))
-                patterns[key] = pattern = new Pattern(trip.Shape, shape, stops);
+                patterns[key] = pattern = new Pattern(trip.Shape, shape, stops, geometry[trip.Shape]);
             trips[tripId] = new TripInfo(tripId, trip.Route, trip.Direction, pattern, version)
             {
                 ScheduledDepartures = times.Select(t => t.Departure).ToArray(),

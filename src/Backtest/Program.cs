@@ -15,10 +15,12 @@ const string Usage = """
       --train-days <n>     days of history before the test window to learn from (default 14)
       --store <path>       cache of replayed predictions and score history (default: next to --db, backtest.db)
       --routes-csv <path>  also write every score broken down by route
+      --learning-curve     also score v1 with history tables from 25% and 50% of the training trips
+      --checkpoint-report  just print how many road segments each checkpoint layout shares between routes
     """;
 
 var opts = ParseOptions(args);
-if (opts is null || !opts.ContainsKey("data") || !opts.ContainsKey("db") || !(opts.ContainsKey("test") ^ opts.ContainsKey("yesterday")))
+if (opts is null || !opts.ContainsKey("data") || !opts.ContainsKey("db") || !(opts.ContainsKey("test") ^ opts.ContainsKey("yesterday") || opts.ContainsKey("checkpoint-report")))
 {
     Console.Error.WriteLine(Usage);
     return 2;
@@ -35,6 +37,41 @@ feeds.Refresh();
 var zone = feeds.Feeds[0].TimeZone;
 var routeTypes = feeds.Feeds.SelectMany(f => f.RouteTypes).GroupBy(kv => kv.Key).ToDictionary(g => g.Key, g => g.First().Value);
 string Mode(BacktestTarget t) => routeTypes.GetValueOrDefault(t.RouteId, 3) is 0 or 1 or 2 ? "rail" : "bus";
+
+// --checkpoint-report: how many road segments each checkpoint layout lets routes share, then exit.
+if (opts.ContainsKey("checkpoint-report"))
+{
+    var feed = feeds.Feeds[0];
+    var patterns = feed.Trips.Values.GroupBy(t => t.Pattern).Select(g => (Pattern: g.Key, Routes: g.Select(t => t.RouteId).ToHashSet())).ToList();
+    foreach (var (layout, build) in new (string, Func<Pattern, Transit.Crossings.Checkpoint[]>)[]
+             {
+                 ("spaced", p => Transit.Crossings.CheckpointBuilder.BuildSpaced(p.Stops)),
+                 ("grid", p => Transit.Crossings.CheckpointBuilder.BuildGrid(p.Stops, feed.Shapes[p.ShapeId])),
+             })
+    {
+        var routesBySegment = new Dictionary<string, HashSet<string>>();
+        var checkpoints = 0L;
+        var metres = new Dictionary<string, double>();
+        foreach (var (pattern, routes) in patterns)
+        {
+            var cps = build(pattern);
+            checkpoints += cps.Length;
+            for (var i = 1; i < cps.Length; i++)
+            {
+                var key = cps[i - 1].Id + "|" + cps[i].Id;
+                (routesBySegment.TryGetValue(key, out var set) ? set : routesBySegment[key] = []).UnionWith(routes);
+                metres[key] = cps[i].Entry - cps[i - 1].Exit;
+            }
+        }
+        var shared = routesBySegment.Where(kv => kv.Value.Count > 1).Select(kv => kv.Key).ToList();
+        // Weighted by route-metres: how much of the network's driving happens on a segment another route also drives.
+        var routeMetres = routesBySegment.Sum(kv => kv.Value.Count * metres[kv.Key]);
+        var sharedRouteMetres = shared.Sum(k => routesBySegment[k].Count * metres[k]);
+        Console.WriteLine($"{layout,-7} {patterns.Count:N0} patterns, {checkpoints / (double)patterns.Count:F0} checkpoints each, {routesBySegment.Count:N0} segments; " +
+            $"{100.0 * shared.Count / routesBySegment.Count:F0}% shared by 2+ routes, {100 * sharedRouteMetres / routeMetres:F0}% of route-metres on shared segments");
+    }
+    return 0;
+}
 
 // Test window: whole service dates, or everything after an instant (useful while history is short).
 string testFrom, testTo;
@@ -126,6 +163,28 @@ if (stats.TravelTable.Keys > 0)
         AddCorrected(model.Name, table);
         Console.WriteLine($"  scored {model.Name} ({clock.Elapsed.TotalSeconds:F0}s)");
     }
+
+    // Learning curve: the same v1 with its history tables built from a stable random share of the training trips.
+    // Today's pace still sees every bus, as it would live; only how much history the medians rest on changes.
+    if (opts.ContainsKey("learning-curve"))
+        foreach (var share in new[] { 0.25, 0.5 })
+        {
+            var sampled = history.Where((date, trip) => !InTraining(date, double.MaxValue) || Bucket(trip) < share);
+            var sampledStats = SegmentStats.Build(sampled, calendar, InTraining);
+            var model = new SegmentEtaPredictor($"v1@{share:P0}".Replace(" ", ""), sampledStats, RecentPace.Build(history, sampledStats), history, Resolve, zone) { UseBlocks = true };
+            var table = new PredictionTable(targets.Count);
+            model.Fill(targets, table);
+            tables.Add((model.Name, table));
+            Console.WriteLine($"  scored {model.Name}: {sampledStats.TravelTable.Keys:N0} segments from {sampled.Trips:N0} trips ({clock.Elapsed.TotalSeconds:F0}s)");
+        }
+}
+
+/// <summary>A trip's place in [0, 1), the same on every run, so a 25% sample sits inside the 50% one.</summary>
+static double Bucket(string tripId)
+{
+    var h = 2166136261u;
+    foreach (var ch in tripId) h = unchecked((h ^ ch) * 16777619);
+    return (h % 10_000) / 10_000.0;
 }
 
 var testTargets = test.Select(i => targets[i]).ToList();
@@ -202,7 +261,7 @@ static Dictionary<string, string?>? ParseOptions(string[] args)
     {
         if (!args[i].StartsWith("--")) return null;
         var name = args[i][2..];
-        opts[name] = name == "yesterday" ? null : i + 1 < args.Length ? args[++i] : null;
+        opts[name] = name is "yesterday" or "learning-curve" or "checkpoint-report" ? null : i + 1 < args.Length ? args[++i] : null;
     }
     return opts;
 }
