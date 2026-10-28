@@ -26,6 +26,12 @@ public sealed record TripInfo(string TripId, string RouteId, int DirectionId, Pa
 
     /// <summary>Scheduled departure at each of Pattern.Stops, in seconds after the service day's origin (noon minus 12 h, local); -1 if absent.</summary>
     public int[] ScheduledDepartures { get; init; } = [];
+
+    /// <summary>
+    /// The trip the same vehicle runs just before this one (same block and service), or null for the block's first.
+    /// A trip that hasn't started can't leave before its bus finishes that one.
+    /// </summary>
+    public string? PreviousInBlock { get; init; }
 }
 
 public sealed record StopInfo(string Id, string Name, double Lat, double Lon);
@@ -118,7 +124,8 @@ public sealed class StaticFeed
         var stopInfo = stopRows.ToDictionary(r => r["stop_id"], r => new StopInfo(r["stop_id"], r["stop_name"], D(r["stop_lat"]), D(r["stop_lon"])));
         var stopCoords = stopInfo.ToDictionary(kv => kv.Key, kv => projection.Project(kv.Value.Lat, kv.Value.Lon));
 
-        var tripRows = Table("trips.txt").ToDictionary(r => r["trip_id"], r => (Route: r["route_id"], Direction: int.TryParse(r["direction_id"], out var d) ? d : 0, Shape: r["shape_id"], Headsign: r["trip_headsign"]));
+        var tripRows = Table("trips.txt").ToDictionary(r => r["trip_id"], r => (Route: r["route_id"], Direction: int.TryParse(r["direction_id"], out var d) ? d : 0, Shape: r["shape_id"], Headsign: r["trip_headsign"],
+            Block: r["block_id"], Service: r["service_id"]));
 
         var stopTimes = new Dictionary<string, List<(int Seq, string StopId, double Dist, int Departure)>>();
         foreach (var r in Table("stop_times.txt"))
@@ -158,7 +165,25 @@ public sealed class StaticFeed
                 Headsign = trip.Headsign,
             };
         }
+        LinkBlocks(trips, tripRows.ToDictionary(kv => kv.Key, kv => (kv.Value.Block, kv.Value.Service)));
         return new StaticFeed(version, projection, trips, patterns.Count, routes, timeZone, stopInfo, geometry);
+    }
+
+    /// <summary>Orders each block's trips by first scheduled departure and points each at the one before it.</summary>
+    static void LinkBlocks(Dictionary<string, TripInfo> trips, Dictionary<string, (string Block, string Service)> blocks)
+    {
+        var groups = trips.Values
+            .Where(t => blocks.TryGetValue(t.TripId, out var b) && b.Block.Length > 0 && t.ScheduledDepartures.Length > 0 && t.ScheduledDepartures[0] >= 0)
+            .GroupBy(t => blocks[t.TripId]);
+        foreach (var group in groups)
+        {
+            string? previous = null;
+            foreach (var trip in group.OrderBy(t => t.ScheduledDepartures[0]))
+            {
+                trips[trip.TripId] = trip with { PreviousInBlock = previous };
+                previous = trip.TripId;
+            }
+        }
     }
 
     static double D(string s) => double.Parse(s, CultureInfo.InvariantCulture);

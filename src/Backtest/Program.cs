@@ -116,8 +116,9 @@ Console.WriteLine($"  v0 tables: {stats.TravelTable.Keys:N0} segments, {stats.Dw
 if (stats.TravelTable.Keys > 0)
 {
     var pace = RecentPace.Build(history, stats);
-    foreach (var model in new[] { new SegmentEtaPredictor("v0-medians", stats, null, history, id => feeds.Resolve(id)?.Trip, zone),
-                 new SegmentEtaPredictor("v1-pace", stats, pace, history, id => feeds.Resolve(id)?.Trip, zone) })
+    TripInfo? Resolve(string id) => feeds.Resolve(id)?.Trip;
+    foreach (var model in new[] { new SegmentEtaPredictor("v0-medians", stats, null, history, Resolve, zone),
+                 new SegmentEtaPredictor("v1-pace", stats, pace, history, Resolve, zone) { UseBlocks = true } })
     {
         var table = new PredictionTable(targets.Count);
         model.Fill(targets, table);
@@ -138,6 +139,31 @@ foreach (var (name, table) in tables)
     scores.AddRange(Scorer.Compute(name, testTargets, sub, _ => "all"));
     scores.AddRange(Scorer.Compute(name, testTargets, sub, Mode));
     scores.AddRange(Scorer.Compute(name, testTargets, sub, t => "route " + t.RouteId));
+}
+
+// Where the error comes from: buses already on the trip, or trips whose bus hadn't started it when asked.
+if (tables.FindIndex(t => t.Name == "v1-pace") is var oi and >= 0)
+{
+    var oursTable = tables[oi].Table;
+    Console.WriteLine("\nBUS by trip state   (median |err| s: metro / v1-pace)");
+    for (var h = 0; h < Horizons.Minutes.Length; h++)
+    {
+        var groups = test.Where(i => Mode(targets[i]) == "bus").GroupBy(i =>
+        {
+            var at = targets[i].Actual.ToUnixTimeSeconds() - Horizons.Minutes[h] * 60;
+            return history.Trip(targets[i].ServiceDate, targets[i].TripId).Any(r => r.DepartKnownAt <= at) ? "on trip" : "not started";
+        });
+        foreach (var g in groups.OrderBy(g => g.Key))
+        {
+            double Med(PredictionTable table) => Median(g.Select(i => Math.Abs(table[i, h] - targets[i].Actual.ToUnixTimeSeconds())).Where(double.IsFinite));
+            Console.WriteLine($"  {Horizons.Minutes[h],2} min  {g.Key,-12} {g.Count(),7:N0} ({100.0 * g.Count() / test.Count,3:F0}%)   {Med(metro),5:F0} / {Med(oursTable),5:F0}");
+        }
+    }
+}
+static double Median(IEnumerable<double> values)
+{
+    var sorted = values.Order().ToArray();
+    return sorted.Length == 0 ? double.NaN : sorted[sorted.Length / 2];
 }
 
 foreach (var group in new[] { "all", "rail", "bus" })

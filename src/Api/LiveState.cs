@@ -333,9 +333,13 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             var dayType = ServiceCalendar.DayTypeOf(serviceDate);
             var now = Now();
             var empty = CrossingHistory.From([]);
-            v0 = new SegmentEtaPredictor("v0", _stats, null, empty, _ => trip, Zone).Predict(trip, cp.Index, rows, dayType, origin, now);
+            TripInfo? Resolve(string id) => _feeds.Resolve(id)?.Trip;
+            // The trip before this one in its block, for a trip whose bus is still finishing it.
+            IReadOnlyList<CrossingRow> RowsOf(string id) => _recent.GetValueOrDefault((serviceDate, id)) ?? [];
+            v0 = new SegmentEtaPredictor("v0", _stats, null, empty, Resolve, Zone).Predict(trip, cp.Index, rows, dayType, origin, now);
             if (_pace is not null)
-                v1 = new SegmentEtaPredictor("v1", _stats, _pace, empty, _ => trip, Zone).Predict(trip, cp.Index, rows, dayType, origin, now);
+                v1 = new SegmentEtaPredictor("v1", _stats, _pace, empty, Resolve, Zone) { UseBlocks = true }
+                    .Predict(trip, cp.Index, rows, dayType, origin, now, RowsOf);
         }
         var name = StopInfoOf(cp.Id)?.Name ?? cp.Id;
         return new StopTime(cp.Id, name, cp.StopSequence, scheduled, metro, Round(v0), Round(v1));
