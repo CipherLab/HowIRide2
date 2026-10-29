@@ -10,6 +10,8 @@
   --lake: #2e8bc0;
   --slate: #7a8a96;
   --rule: #d9e1e6;
+  /* Metro Transit's estimate wherever it's drawn; validated against amber for colour-blind separation. */
+  --metro: #2b6cb0;
 
   --font-text: 'Atkinson Hyperlegible Next', system-ui, sans-serif;
   --font-data: 'Atkinson Hyperlegible Mono', ui-monospace, monospace;
@@ -101,9 +103,10 @@ button {
 
 .wordmark {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 4px 12px;
 }
 
 .wordmark h1 {
@@ -609,7 +612,7 @@ table.scores tr.headline td:first-child {
 }
 
 .dot.metro {
-  background: var(--ink);
+  background: var(--metro);
 }
 
 .h2h-legend .tick,
@@ -752,7 +755,7 @@ table.scores tr.headline td:first-child {
 }
 
 .bar.metro {
-  background: var(--ink);
+  background: var(--metro);
 }
 
 .fineprint {
@@ -793,4 +796,231 @@ details.more[open] summary {
   height: 22px;
   font-size: 13px;
   box-shadow: 0 0 0 1px rgb(243 246 247 / 0.25);
+}
+
+/* ---- Charts tab: the panel widens to give small multiples room ---- */
+
+.panel.wide {
+  width: min(780px, calc(100vw - 24px));
+}
+
+@media (max-width: 720px) {
+  .panel.wide {
+    width: auto;
+    max-height: 80vh;
+  }
+}
+
+.charts-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+/* Segmented control: one choice of two. */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--rule);
+}
+
+.seg button {
+  border: 0;
+  background: transparent;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--slate);
+}
+
+.seg button[aria-checked='true'] {
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(20 33 43 / 0.12);
+}
+
+.multiples {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px 24px;
+  margin-top: 10px;
+}
+
+.chart {
+  margin: 0;
+  min-width: 0;
+}
+
+.chart figcaption {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4px;
+}
+
+.chart figcaption strong {
+  font-size: 14px;
+}
+
+.chart figcaption span {
+  font-size: 12px;
+  color: var(--slate);
+}
+
+.chart .plot {
+  position: relative;
+  border-radius: 4px;
+}
+
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+
+.chart .grid,
+.dumbbells .grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+
+.chart .zero {
+  stroke: var(--slate);
+  stroke-width: 1;
+}
+
+.chart .crosshair {
+  stroke: var(--slate);
+  stroke-width: 1;
+}
+
+.tick {
+  font-family: var(--font-data);
+  font-size: 10px;
+  fill: var(--slate);
+}
+
+.axis-note {
+  margin: 6px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--slate);
+}
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  min-width: 140px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  z-index: 1;
+}
+
+.tt-head {
+  color: var(--slate);
+  margin-bottom: 2px;
+}
+
+.tt-row {
+  display: grid;
+  grid-template-columns: 12px auto 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Line key, not a box. */
+.tt-row i {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.tt-row b {
+  font-variant-numeric: tabular-nums;
+}
+
+.tt-row span {
+  color: var(--slate);
+}
+
+/* Route dumbbells */
+.dumbbells {
+  margin-top: 8px;
+}
+
+.db-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 96px;
+  align-items: center;
+  min-height: 24px;
+}
+
+.db-row svg {
+  display: block;
+  overflow: visible;
+}
+
+.db-head {
+  font-size: 12px;
+  color: var(--slate);
+}
+
+.db-head span:last-child,
+.db-values {
+  text-align: right;
+}
+
+.db-values {
+  font-size: 12px;
+  color: var(--slate);
+  font-variant-numeric: tabular-nums;
+}
+
+.db-values b {
+  color: var(--ink);
+}
+
+.db-gap {
+  stroke: var(--slate);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.35;
+}
+
+.db-row.win .db-gap {
+  stroke: var(--amber-deep);
+  opacity: 0.6;
+}
+
+.db-more {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  align-items: center;
+  min-height: 32px;
+}
+
+.db-more button {
+  justify-self: start;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.db-row:hover {
+  background: rgb(46 139 192 / 0.06);
+}
+
+.tick-unit {
+  font-size: 11px;
+  color: var(--slate);
+  text-align: right;
 }

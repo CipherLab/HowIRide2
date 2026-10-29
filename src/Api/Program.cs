@@ -67,7 +67,7 @@ api.MapGet("/scores", (ApiOptions options) =>
     db.Open();
     using var cmd = db.CreateCommand();
     cmd.CommandText = """
-        SELECT run_at, test_from, test_to, predictor, grp, horizon_min, predicted, coverage, median_abs_s, bias_s, within_1m, early_rate
+        SELECT run_at, test_from, test_to, predictor, grp, horizon_min, predicted, coverage, median_abs_s, bias_s, within_1m, early_rate, p90_abs_s
         FROM scores
         WHERE grp IN ('all', 'bus', 'rail') AND run_at IN (SELECT DISTINCT run_at FROM scores ORDER BY run_at DESC LIMIT 30)
         ORDER BY run_at, grp, horizon_min, predictor
@@ -79,8 +79,35 @@ api.MapGet("/scores", (ApiOptions options) =>
         {
             runAt = r.GetString(0), testFrom = r.GetString(1), testTo = r.GetString(2), predictor = r.GetString(3), group = r.GetString(4),
             horizon = r.GetInt32(5), predicted = r.GetInt32(6), coverage = N(r, 7), medianAbs = N(r, 8), bias = N(r, 9), within1m = N(r, 10), early = N(r, 11),
+            p90Abs = N(r, 12),
         });
     return Results.Ok(new { runs = rows });
+
+    static double? N(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDouble(i);
+});
+
+// The latest run's scores route by route, for ours, Metro's and the timetable: where we win and where we lose.
+api.MapGet("/scores/routes", (ApiOptions options) =>
+{
+    if (!File.Exists(options.BacktestDbPath)) return Results.Ok(new { runAt = (string?)null, rows = Array.Empty<object>() });
+    using var db = new SqliteConnection($"Data Source={options.BacktestDbPath};Mode=ReadOnly");
+    db.Open();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = """
+        SELECT run_at, substr(grp, 7), predictor, horizon_min, predicted, median_abs_s, early_rate
+        FROM scores
+        WHERE grp LIKE 'route %' AND predictor IN ('v1-pace', 'metro-tripupdates', 'schedule')
+          AND run_at = (SELECT max(run_at) FROM scores WHERE grp LIKE 'route %')
+        """;
+    using var r = cmd.ExecuteReader();
+    string? runAt = null;
+    var rows = new List<object>();
+    while (r.Read())
+    {
+        runAt = r.GetString(0);
+        rows.Add(new { route = r.GetString(1), predictor = r.GetString(2), horizon = r.GetInt32(3), predicted = r.GetInt32(4), medianAbs = N(r, 5), early = N(r, 6) });
+    }
+    return Results.Ok(new { runAt, rows });
 
     static double? N(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDouble(i);
 });

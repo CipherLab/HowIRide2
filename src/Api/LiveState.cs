@@ -32,7 +32,8 @@ public sealed record VehicleView(
 /// <summary>A stop plus the routes that serve it: rail and rapid lines first, then buses in number order.</summary>
 public sealed record StopView(string Id, string Name, double Lat, double Lon, RouteInfo[] Routes);
 
-public sealed record StopTime(string StopId, string Name, int Sequence, double? Scheduled, double? Metro, double? V0, double? V1);
+/// <param name="Dist">Metres along the trip's shape, on the same scale as a vehicle's dist.</param>
+public sealed record StopTime(string StopId, string Name, int Sequence, double Dist, double? Scheduled, double? Metro, double? V0, double? V1);
 
 public sealed record VehicleDetail(VehicleView Vehicle, StopTime[] NextStops);
 
@@ -342,7 +343,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
                     .Predict(trip, cp.Index, rows, dayType, origin, now, RowsOf);
         }
         var name = StopInfoOf(cp.Id)?.Name ?? cp.Id;
-        return new StopTime(cp.Id, name, cp.StopSequence, scheduled, metro, Round(v0), Round(v1));
+        return new StopTime(cp.Id, name, cp.StopSequence, Math.Round(cp.Dist, 1), scheduled, metro, Round(v0), Round(v1));
 
         static double? Round(double? v) => v is { } x ? Math.Round(x) : null;
     }

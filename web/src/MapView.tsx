@@ -1,9 +1,10 @@
 import { GeolocateControl, LngLatBounds, Map as MapLibre, NavigationControl, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { FeatureCollection } from 'geojson'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
-import { api, isRapid } from './api'
-import type { LiveVehicles, Placed } from './live'
+import { api, isRapid, type StopTime } from './api'
+import { pointAt, type LiveVehicles, type Placed } from './live'
 import { ARROW_ICON, arrowIcon, STOP_ICON, stopIcon } from './vehicleIcon'
 
 // MapLibre 6 runs tile work in a separate worker file; bundlers must ship it and say where it is.
@@ -13,6 +14,10 @@ export type Selection = { kind: 'vehicle'; id: string } | { kind: 'stop'; id: st
 
 const STOPS_MIN_ZOOM = 13
 const FRAME_MS = 100
+/** Breadcrumbs from the selected bus to its next stop: screen spacing, and how fast they drift toward the stop. */
+const TRAIL_SPACING_PX = 14
+const TRAIL_SPEED_PX = 12
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)')
 /** Keep the side panel (or bottom sheet), open or folded into its tab, from covering what we fly to. */
 function panelPadding() {
   const rect = document.querySelector('.panel, .rail')?.getBoundingClientRect()
@@ -41,6 +46,30 @@ function keepCentred(map: MapLibre, p: Placed) {
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
+/**
+ * Dots along the shape from a placed bus to its next stop, plus a ring on the stop. They're spaced in screen
+ * pixels so they read the same at any zoom, and drift toward the stop so the direction is plain.
+ */
+function trailFor(map: MapLibre, live: LiveVehicles, p: Placed, nextStops: StopTime[]): FeatureCollection {
+  const shape = live.shape(p.vehicle.shapeId)
+  const from = p.dist
+  const next = from == null ? undefined : nextStops.find((s) => s.dist > from + 5)
+  if (!shape || from == null || !next) return EMPTY
+  const metresPerPx = (40075016 * Math.cos((p.lat * Math.PI) / 180)) / (512 * 2 ** map.getZoom())
+  const step = TRAIL_SPACING_PX * metresPerPx
+  const offset = REDUCED_MOTION.matches ? 0 : ((performance.now() / 1000) * TRAIL_SPEED_PX * metresPerPx) % step
+  const color = `#${p.vehicle.color ?? '4F5B66'}`
+  const features: FeatureCollection['features'] = []
+  // Clear of the bus arrow at one end and the ring at the other; capped for a stop far away when zoomed out.
+  for (let d = from + step + offset; d < next.dist - step * 0.7 && features.length < 300; d += step) {
+    const q = pointAt(shape, d)
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [q.lon, q.lat] }, properties: { kind: 'dot', color } })
+  }
+  const end = pointAt(shape, next.dist)
+  features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [end.lon, end.lat] }, properties: { kind: 'target', color } })
+  return { type: 'FeatureCollection', features }
+}
+
 /** Vehicles are filled with their route's colour; the grey ones aren't on a trip. */
 const vehicleFill: ExpressionSpecification = ['case', ['get', 'onTrip'], ['get', 'color'], '#A9B5BE']
 
@@ -67,6 +96,16 @@ export function MapView({
   followRef.current = follow
   const onFollowChangeRef = useRef(onFollowChange)
   onFollowChangeRef.current = onFollowChange
+  // The selected bus's upcoming stops, shared with its panel's query, for the breadcrumbs to the next one.
+  const vehicleId = selection?.kind === 'vehicle' ? selection.id : null
+  const detail = useQuery({
+    queryKey: ['vehicle', vehicleId ?? ''],
+    queryFn: () => api.vehicle(vehicleId!),
+    enabled: vehicleId != null,
+    refetchInterval: 10_000,
+  })
+  const nextStopsRef = useRef<StopTime[]>([])
+  nextStopsRef.current = vehicleId ? (detail.data?.nextStops ?? []) : []
 
   useEffect(() => {
     const map = new MapLibre({
@@ -84,6 +123,7 @@ export function MapView({
       map.addSource('route', { type: 'geojson', data: EMPTY })
       map.addSource('stops', { type: 'geojson', data: EMPTY })
       map.addSource('vehicles', { type: 'geojson', data: EMPTY })
+      map.addSource('trail', { type: 'geojson', data: EMPTY })
 
       map.addLayer({
         id: 'route-casing',
@@ -98,6 +138,22 @@ export function MapView({
         source: 'route',
         paint: { 'line-color': ['get', 'color'], 'line-width': 5 },
         layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      // White dots on the route line from the selected bus to its next stop, which gets a ring in the route's colour.
+      map.addLayer({
+        id: 'trail-dots',
+        type: 'circle',
+        source: 'trail',
+        filter: ['==', ['get', 'kind'], 'dot'],
+        paint: { 'circle-radius': 2.5, 'circle-color': '#FFFFFF', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 1 },
+      })
+      map.addLayer({
+        id: 'trail-target',
+        type: 'circle',
+        source: 'trail',
+        filter: ['==', ['get', 'kind'], 'target'],
+        // Open, and big enough to circle the stop's square once it's lifted above the stops below.
+        paint: { 'circle-radius': 12, 'circle-opacity': 0, 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 },
       })
       // Stops are squares, so they can't be mistaken for vehicles or for Metro Transit's hollow ring in the
       // timelines. Coloured by the first route serving them: a rail or rapid-line colour if any, else the bus colour.
@@ -181,6 +237,8 @@ export function MapView({
         filter: ['get', 'onTrip'],
         paint: { 'text-color': ['get', 'textColor'] },
       })
+
+      map.moveLayer('trail-target', 'vehicle-idle')
 
       for (const layer of ['vehicle-arrow', 'vehicle-idle', 'stops']) {
         map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'))
@@ -266,7 +324,9 @@ export function MapView({
           },
         })),
       })
-      const followed = followRef.current && selected ? placed.find((p) => p.vehicle.id === selected) : undefined
+      const me = selected ? placed.find((p) => p.vehicle.id === selected) : undefined
+      ;(map.getSource('trail') as GeoJSONSource | undefined)?.setData(me ? trailFor(map, live, me, nextStopsRef.current) : EMPTY)
+      const followed = followRef.current ? me : undefined
       if (followed && !pressed) keepCentred(map, followed)
     }, FRAME_MS)
 
@@ -282,11 +342,14 @@ export function MapView({
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
+    let retry: ReturnType<typeof setTimeout> | undefined
     const apply = () => {
       const route = map.getSource('route') as GeoJSONSource | undefined
       if (!route) return
       const vehicle = selection?.kind === 'vehicle' ? live.vehicle(selection.id) : null
       const shape = vehicle ? live.shape(vehicle.shapeId) : null
+      // Opened from a link, the vehicle or its shape may not have arrived yet; draw the route once they have.
+      if (selection?.kind === 'vehicle' && !shape) retry = setTimeout(apply, 500)
       route.setData(
         shape
           ? {
@@ -300,6 +363,10 @@ export function MapView({
     }
     if (map.isStyleLoaded()) apply()
     else map.once('load', apply)
+    return () => {
+      clearTimeout(retry)
+      map.off('load', apply)
+    }
   }, [selection, live])
 
   // While following, zooming keeps the bus in the middle instead of zooming toward the pointer.

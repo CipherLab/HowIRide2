@@ -58,6 +58,8 @@ export interface StopTime {
   stopId: string
   name: string
   sequence: number
+  /** Metres along the trip's shape, on the same scale as a vehicle's dist. */
+  dist: number
   scheduled: number | null
   metro: number | null
   v0: number | null
@@ -91,6 +93,18 @@ export interface Score {
   bias: number | null
   within1m: number | null
   early: number | null
+  /** Nine in ten estimates were closer than this. */
+  p90Abs: number | null
+}
+
+/** One route's score in the latest run. */
+export interface RouteScore {
+  route: string
+  predictor: string
+  horizon: number
+  predicted: number
+  medianAbs: number | null
+  early: number | null
 }
 
 export interface Health {
@@ -120,6 +134,8 @@ export const api = {
     get<Stop[]>(`/stops?bbox=${[south, west, north, east].map((v) => v.toFixed(5)).join(',')}`),
   stop: (id: string) => get<{ stop: Stop; departures: Departure[] }>(`/stops/${encodeURIComponent(id)}`),
   scores: () => get<{ runs: Score[] }>('/scores'),
+  routeScores: () => get<{ runAt: string | null; rows: RouteScore[] }>('/scores/routes'),
+  routes: () => get<Route[]>('/routes'),
 }
 
 /** The single time to headline: ours if we have it, then Metro's, then the timetable. */

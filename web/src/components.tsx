@@ -45,7 +45,7 @@ export function clock(t: number | null) {
 
 const MARK = {
   schedule: { color: '#7A8A96' },
-  metro: { color: '#14212B' },
+  metro: { color: '#2B6CB0' },
   ours: { color: '#F2A900' },
 }
 

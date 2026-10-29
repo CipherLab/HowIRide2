@@ -40,6 +40,8 @@ export interface Placed {
   lat: number
   /** Heading in degrees clockwise from north, when known from the shape. */
   bearing: number | null
+  /** Metres along the shape as drawn; null when the vehicle isn't placed on one. */
+  dist: number | null
 }
 
 export class LiveVehicles {
@@ -169,9 +171,9 @@ export class LiveVehicles {
       }
       if (shape && d != null) {
         const p = pointAt(shape, d)
-        out.push({ vehicle: track.vehicle, lon: p.lon, lat: p.lat, bearing: p.bearing })
+        out.push({ vehicle: track.vehicle, lon: p.lon, lat: p.lat, bearing: p.bearing, dist: d })
       } else {
-        out.push({ vehicle: track.vehicle, lon: track.vehicle.lon, lat: track.vehicle.lat, bearing: null })
+        out.push({ vehicle: track.vehicle, lon: track.vehicle.lon, lat: track.vehicle.lat, bearing: null, dist: null })
       }
     }
     return out
@@ -193,7 +195,7 @@ function distanceAt(samples: { t: number; d: number }[], t: number): number | nu
   return last.d + speed * Math.min(t - last.t, DEAD_RECKON_S)
 }
 
-function pointAt(shape: Shape, d: number) {
+export function pointAt(shape: Shape, d: number) {
   const { dist, lat, lon } = shape
   let lo = 0
   let hi = dist.length - 1

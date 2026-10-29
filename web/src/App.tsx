@@ -4,9 +4,12 @@ import { api } from './api'
 import { RouteBadge } from './components'
 import { LiveVehicles } from './live'
 import { MapView, type Selection } from './MapView'
+import { Charts } from './charts'
 import { LiveStatus, Overview, Scorecard, StopPanel, useLive, VehiclePanel } from './panels'
 
-type View = 'map' | 'scores'
+type View = 'map' | 'scores' | 'charts'
+
+const VIEW_HASH: Partial<Record<View, string>> = { scores: '#scorecard', charts: '#charts' }
 
 const COLLAPSED_KEY = 'panel-collapsed'
 
@@ -26,7 +29,9 @@ function fromHash(): Selection {
 export default function App() {
   const [live] = useState(() => new LiveVehicles())
   const [selection, setSelection] = useState<Selection>(fromHash)
-  const [view, setView] = useState<View>(() => (location.hash === '#scorecard' ? 'scores' : 'map'))
+  const [view, setView] = useState<View>(
+    () => (Object.entries(VIEW_HASH).find(([, h]) => h === location.hash)?.[0] as View | undefined) ?? 'map',
+  )
   // Picking a vehicle follows it until the user drags the map away.
   const [follow, setFollow] = useState(true)
   // The panel folds into a tab on the left (a bar along the bottom on phones) to give the map the whole screen.
@@ -50,9 +55,9 @@ export default function App() {
   }, [])
   const following = follow && selection?.kind === 'vehicle'
 
-  // The selection lives in the URL (#stop/123, #vehicle/456, #scorecard) so a view can be bookmarked or shared.
+  // The selection lives in the URL (#stop/123, #vehicle/456, #scorecard, #charts) so a view can be bookmarked or shared.
   useEffect(() => {
-    const hash = view === 'scores' ? '#scorecard' : selection ? `#${selection.kind}/${selection.id}` : ''
+    const hash = VIEW_HASH[view] ?? (selection ? `#${selection.kind}/${selection.id}` : '')
     if (location.hash !== hash) history.replaceState(null, '', hash || location.pathname)
   }, [selection, view])
 
@@ -83,12 +88,15 @@ export default function App() {
           <button className="rail-tab" aria-current={view === 'scores' ? 'page' : undefined} onClick={() => open('scores')}>
             Scorecard
           </button>
+          <button className="rail-tab" aria-current={view === 'charts' ? 'page' : undefined} onClick={() => open('charts')}>
+            Charts
+          </button>
           <span className="rail-mark" aria-hidden="true">
             TC ETA
           </span>
         </nav>
       ) : (
-        <aside className="panel" aria-label="Details">
+        <aside className={view === 'charts' ? 'panel wide' : 'panel'} aria-label="Details">
           <header className="panel-head">
             <div className="wordmark">
               <h1>TWIN CITIES ETA</h1>
@@ -98,6 +106,9 @@ export default function App() {
                 </button>
                 <button aria-current={view === 'scores' ? 'page' : undefined} onClick={() => setView('scores')}>
                   Scorecard
+                </button>
+                <button aria-current={view === 'charts' ? 'page' : undefined} onClick={() => setView('charts')}>
+                  Charts
                 </button>
                 <button className="collapse" onClick={() => setCollapsed(true)} aria-label="Hide panel" title="Hide panel">
                   <span aria-hidden="true">‹</span>
@@ -109,10 +120,13 @@ export default function App() {
               <Heading selection={selection} live={live} onBack={() => setSelection(null)} following={following} onFollowChange={setFollow} />
             )}
             {view === 'scores' && <h2 className="title">How accurate are the predictions?</h2>}
+            {view === 'charts' && <h2 className="title">How our estimates compare with Metro Transit’s</h2>}
           </header>
           <div className="panel-body">
             {view === 'scores' ? (
               <Scorecard />
+            ) : view === 'charts' ? (
+              <Charts />
             ) : selection?.kind === 'vehicle' ? (
               <VehiclePanel id={selection.id} live={live} onSelect={select} />
             ) : selection?.kind === 'stop' ? (
