@@ -191,7 +191,7 @@ function LineChart({
   floorZero?: boolean
   height?: number
 }) {
-  const [box, width] = useWidth<HTMLDivElement>()
+  const [box, width] = useWidth<HTMLElement>()
   const [hover, setHover] = useState<number | null>(null)
   const drawn = series.filter((s) => s.points.length > 0)
   const xs = x.ticks
