@@ -1,4 +1,5 @@
 using Transit.Archive;
+using Transit.Backtest;
 using Transit.Eta;
 using Transit.Gtfs;
 
@@ -72,7 +73,8 @@ public sealed class ModelRefresher(LiveState state, ApiOptions options, TimeProv
                 var history = await Task.Run(() => CrossingHistory.Load(options.DbPath,
                     today.AddDays(-options.HistoryDays).ToString("yyyyMMdd"), today.ToString("yyyyMMdd")), stoppingToken);
                 var now = clock.GetUtcNow().ToUnixTimeSeconds();
-                var stats = SegmentStats.Build(history, new ServiceCalendar(state.Zone), (_, end) => end < now);
+                var stats = SegmentStats.Build(history, new ServiceCalendar(state.Zone), (_, end) => end < now,
+                    scheduledStart: SegmentStats.ScheduledStarts(state.ResolveTrip, state.Zone));
                 state.SetStats(stats);
                 log.LogInformation("Model tables rebuilt: {Segments:N0} segments, {Stops:N0} stops from {Trips:N0} trips",
                     stats.TravelTable.Keys, stats.DwellTable.Keys, history.Trips);
@@ -82,5 +84,53 @@ public sealed class ModelRefresher(LiveState state, ApiOptions options, TimeProv
                 log.LogError(ex, "Model refresh failed; keeping the previous tables");
             }
         } while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+}
+
+/// <summary>
+/// Archives what v1 is predicting once a minute, so tomorrow's backtest can score the numbers riders actually saw
+/// rather than a replay of them. Losing a sample costs coverage and nothing else, so failures are logged and survived.
+/// </summary>
+public sealed class PredictionLogger(LiveState state, ApiOptions options, TimeProvider clock, ILogger<PredictionLogger> log) : BackgroundService
+{
+    static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
+
+    /// <summary>Past the longest horizon the backtest scores (30 min), with room for predictions that were optimistic.</summary>
+    static readonly double WindowSeconds = TimeSpan.FromMinutes(45).TotalSeconds;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await state.Ready.WaitAsync(stoppingToken);
+        var directory = Path.GetFullPath(options.PredictionLogDir);
+        using var writer = new RawArchiveWriter(Path.GetDirectoryName(directory)!, Path.GetFileName(directory));
+        foreach (var leftover in writer.FindUncompressed(clock.GetUtcNow()).ToList())
+            _ = Task.Run(() => RawArchiveWriter.Compress(leftover), stoppingToken);
+
+        var (samples, stops) = (0, 0L);
+        var slowest = TimeSpan.Zero;
+        using var timer = new PeriodicTimer(Interval, clock);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            try
+            {
+                var started = clock.GetUtcNow();
+                var sample = await Task.Run(() => state.SamplePredictions(WindowSeconds), stoppingToken);
+                if (sample is null) continue;
+                writer.Append(clock.GetUtcNow(), LivePredictionLog.Encode(sample));
+                samples++;
+                stops += sample.Sum(t => t.Stops.Count);
+                if (clock.GetUtcNow() - started > slowest) slowest = clock.GetUtcNow() - started;
+                if (samples % 60 == 1)
+                {
+                    log.LogInformation("Logged {Samples} prediction samples, {Stops:N0} stops per sample on average; slowest {Slowest:F1} s",
+                        samples, stops / samples, slowest.TotalSeconds);
+                    slowest = TimeSpan.Zero;
+                }
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                log.LogError(ex, "Could not log a prediction sample");
+            }
+        }
     }
 }

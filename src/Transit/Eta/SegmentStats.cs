@@ -116,8 +116,15 @@ public sealed class SlotMedians(double? trim = null)
 }
 
 /// <summary>Segment travel and stop dwell tables learned from history.</summary>
-public sealed class SegmentStats(SlotMedians travel, SlotMedians dwell, ServiceCalendar calendar)
+public sealed class SegmentStats(SlotMedians travel, SlotMedians dwell, ServiceCalendar calendar, SlotMedians? startDelays = null)
 {
+    /// <summary>A start this far from the timetable is a swapped or replaced bus, not how the stop usually runs.</summary>
+    const double MaxStartDelaySeconds = 1800;
+
+    /// <summary>How long after the timetable (negative: before) trips typically leave this first stop; 0 with no history.</summary>
+    public double StartDelay(string firstCheckpoint, DayType dayType, double scheduledUnix) =>
+        startDelays?.Get(firstCheckpoint, dayType, calendar.SlotOf(scheduledUnix)) ?? 0;
+
     public SlotMedians TravelTable => travel;
     public SlotMedians DwellTable => dwell;
     public ServiceCalendar Calendar => calendar;
@@ -125,8 +132,13 @@ public sealed class SegmentStats(SlotMedians travel, SlotMedians dwell, ServiceC
     public double? Travel(string segment, DayType dayType, double atUnix) => travel.Get(segment, dayType, calendar.SlotOf(atUnix));
     public double? Dwell(string stopCheckpoint, DayType dayType, double atUnix) => dwell.Get(stopCheckpoint, dayType, calendar.SlotOf(atUnix));
 
+    /// <summary>The timetabled start of a trip on a service date, for learning start delays.</summary>
+    public static Func<string, string, double?> ScheduledStarts(Func<string, Gtfs.TripInfo?> resolve, TimeZoneInfo zone) => (date, tripId) =>
+        resolve(tripId) is { ScheduledDepartures: [>= 0 and var first, ..] } ? Gtfs.StaticFeed.ServiceDayOrigin(date, zone).ToUnixTimeSeconds() + first : null;
+
     /// <summary>Learns from history the caller has judged to be in the past (the training window).</summary>
-    public static SegmentStats Build(CrossingHistory history, ServiceCalendar calendar, Func<string, double, bool> include, double? trim = null)
+    public static SegmentStats Build(CrossingHistory history, ServiceCalendar calendar, Func<string, double, bool> include, double? trim = null,
+        Func<string, string, double?>? scheduledStart = null)
     {
         var travel = new SlotMedians(trim);
         foreach (var o in history.Segments())
@@ -136,6 +148,15 @@ public sealed class SegmentStats(SlotMedians travel, SlotMedians dwell, ServiceC
         foreach (var (cp, date, arrive, seconds) in history.Dwells())
             if (include(date, arrive + seconds))
                 dwell.Add(cp, ServiceCalendar.DayTypeOf(date), calendar.SlotOf(arrive), seconds);
-        return new SegmentStats(travel.Build(), dwell.Build(), calendar);
+        SlotMedians? startDelays = null;
+        if (scheduledStart is not null)
+        {
+            startDelays = new SlotMedians(trim);
+            foreach (var (cp, date, trip, depart) in history.Starts())
+                if (include(date, depart) && scheduledStart(date, trip) is { } scheduled && Math.Abs(depart - scheduled) <= MaxStartDelaySeconds)
+                    startDelays.Add(cp, ServiceCalendar.DayTypeOf(date), calendar.SlotOf(scheduled), depart - scheduled);
+            startDelays.Build();
+        }
+        return new SegmentStats(travel.Build(), dwell.Build(), calendar, startDelays);
     }
 }

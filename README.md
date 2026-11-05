@@ -103,6 +103,39 @@ dotnet run --project src/Backtest -c Release -- <data-dir> <crossings.db> 202610
 - **Contenders today:** the printed `schedule` and `metro-tripupdates`. New models implement `IPredictor` and are scored the same way.
 - **Metrics:** coverage, median and p90 absolute error, bias (mean of predicted minus actual), share within ±1 and ±2 minutes, and the *early* rate: the bus left more than 60 s before the predicted time.
 
+### Trips that haven't started
+
+Most of the error on a trip that hasn't started is the guess of when it will, so that's learned rather than read off the timetable:
+
+- **Usual start:** the median delay from the timetable at that first stop, by day type and 15-minute slot, from history.
+- **Bus still out:** it can't start before the previous trip in its block finishes, plus a minute's layover.
+- **Previous trip never seen,** 15 minutes past its start: cancelled or run by another bus, so the next trip stops waiting for it.
+- **Overdue and unseen,** 5 minutes past the usual start: predicted as if it left on time, because tracking often begins a few stops in.
+
+Only crossings knowable at the query time count as seen; a replay's store also holds later ones.
+
+### Nightly scoring
+
+`deploy/transit-backtest.timer` scores yesterday at 04:30 and appends to `derived/backtest.db`, which feeds the Charts tab.
+The container is limited to two cores and a 3 GB heap, and is the first thing killed if the node runs out of memory, so it can't cost a recording.
+The heap cap is .NET's own: the Pi boots with `cgroup_disable=memory`, so Docker's memory limits don't apply there.
+
+```sh
+sudo cp deploy/transit-backtest.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now transit-backtest.timer
+journalctl -u transit-backtest.service     # last night's scores
+```
+
+`--corrections` also scores `+cap` and `metro+median`, which means predicting every training day. It takes hours on the Pi, so run it elsewhere.
+
+### What riders actually saw
+
+The API writes what v1 is predicting to `derived/live-predictions` once a minute, in the raw archive format above: every stop of every trip due within 45 minutes, including trips that haven't started.
+With `--live-log <dir>` the backtest scores that log as `live-v1`, by the same latest-sample rule as Metro's feed: a sample more than 90 s old at the query time counts as no prediction.
+
+`v1-pace` is a replay that learns only from earlier days; `live-v1` is what was on screen, from tables that also include today so far. A gap between them means the replay isn't telling the truth about production.
+
 ## Live map and API
 
 `docker compose up -d` also runs `api` on port 8080: open `http://<node>:8080` on the LAN.

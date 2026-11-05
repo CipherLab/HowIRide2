@@ -21,6 +21,12 @@ public sealed class SegmentEtaPredictor(
     /// </summary>
     public const double KnowledgeLagSeconds = SegmentObservation.FeedLagSeconds + 15;
 
+    /// <summary>How long past its usual start a trip can go unseen before we assume it left and tracking is what's late.</summary>
+    public const double AssumedLeftAfterSeconds = 300;
+
+    /// <summary>How long past its start a trip can go unseen before the next trip in its block stops waiting for it.</summary>
+    public const double UnseenTripGraceSeconds = 900;
+
     public string Name => name;
 
     public void Fill(IReadOnlyList<BacktestTarget> targets, PredictionTable table)
@@ -55,6 +61,19 @@ public sealed class SegmentEtaPredictor(
         Func<string, IReadOnlyList<CrossingRow>>? rowsOf = null) =>
         Walk(trip, target, rows, dayType, serviceOrigin, now, UseBlocks ? rowsOf : null, MaxBlockDepth)?.Depart;
 
+    /// <summary>
+    /// What <see cref="Predict"/> would say for every stop still ahead of the bus, up to <paramref name="notAfter"/>,
+    /// from one walk along the trip instead of one per stop.
+    /// </summary>
+    public IReadOnlyList<(int StopSequence, double Depart)> PredictAlong(TripInfo trip, IReadOnlyList<CrossingRow> rows, DayType dayType, double serviceOrigin, double now,
+        Func<string, IReadOnlyList<CrossingRow>>? rowsOf = null, double notAfter = double.PositiveInfinity)
+    {
+        var stops = new List<(int, double)>();
+        Walk(trip, trip.Pattern.Checkpoints.Length - 1, rows, dayType, serviceOrigin, now, UseBlocks ? rowsOf : null, MaxBlockDepth, notAfter,
+            (cp, depart) => { if (cp.Kind == CheckpointKind.Stop) stops.Add((cp.StopSequence, depart)); });
+        return stops;
+    }
+
     /// <summary>Whether a trip that hasn't started is held back by the predicted end of the trip before it in its block.</summary>
     public bool UseBlocks { get; init; }
 
@@ -65,7 +84,7 @@ public sealed class SegmentEtaPredictor(
     public const int MaxBlockDepth = 3;
 
     (double Arrive, double Depart)? Walk(TripInfo trip, int target, IReadOnlyList<CrossingRow> rows, DayType dayType, double serviceOrigin,
-        double now, Func<string, IReadOnlyList<CrossingRow>>? rowsOf, int depth)
+        double now, Func<string, IReadOnlyList<CrossingRow>>? rowsOf, int depth, double notAfter = double.PositiveInfinity, Action<Checkpoint, double>? onDepart = null)
     {
         var checkpoints = trip.Pattern.Checkpoints;
 
@@ -81,14 +100,17 @@ public sealed class SegmentEtaPredictor(
             (from, t) = (last.Index, last.Depart!.Value);
         else
         {
-            // Not started (or not seen yet): leave the origin at the scheduled time, or now if that's passed...
+            // Not started (or not seen yet): leave the origin when trips from there usually do...
             var scheduled = trip.ScheduledDepartures.Length > 0 ? trip.ScheduledDepartures[0] : -1;
             if (scheduled < 0) return null;
-            (from, t) = (0, Math.Max(now, serviceOrigin + scheduled));
-            // ...but not before the bus is back from the trip it's on.
+            var earliest = serviceOrigin + scheduled + stats.StartDelay(checkpoints[0].Id, dayType, serviceOrigin + scheduled);
+            // ...but not before the bus is back from the trip it's on, unless that trip seems not to have run.
             if (rowsOf is not null && depth > 0 && trip.PreviousInBlock is { } previousId && resolveTrip(previousId) is { } previous
+                && !NeverAppeared(previous, rowsOf(previousId), serviceOrigin, now)
                 && Finish(previous, rowsOf(previousId), dayType, serviceOrigin, now, rowsOf, depth - 1) is { } finish)
-                t = Math.Max(t, finish + MinLayoverSeconds);
+                earliest = Math.Max(earliest, finish + MinLayoverSeconds);
+            // Long past that with no sighting, the likelier story is that tracking started late, not that the bus is still waiting.
+            (from, t) = (0, now - earliest > AssumedLeftAfterSeconds ? earliest : Math.Max(now, earliest));
         }
 
         var position = checkpoints[from].Dist;
@@ -105,9 +127,16 @@ public sealed class SegmentEtaPredictor(
             if (s == from + 1) arrive = Math.Max(arrive, now - KnowledgeLagSeconds);
             var dwell = cp.Kind == CheckpointKind.Stop ? stats.Dwell(cp.Id, dayType, arrive) ?? DefaultDwellSeconds : 0;
             t = arrive + dwell;
+            if (t > notAfter) break;
+            onDepart?.Invoke(cp, Math.Max(t, now));
         }
-        return (arrive, t);
+        return (arrive, Math.Max(t, now));
     }
+
+    /// <summary>A trip this overdue, with nothing at all known about it, was cancelled or run by another bus.</summary>
+    bool NeverAppeared(TripInfo trip, IReadOnlyList<CrossingRow> rows, double serviceOrigin, double now) =>
+        trip.ScheduledDepartures is [>= 0 and var first, ..] && now - (serviceOrigin + first) > UnseenTripGraceSeconds
+        && !rows.Any(r => r.DepartKnownAt <= now);
 
     /// <summary>When the bus reaches the last checkpoint of <paramref name="trip"/>: seen, or predicted.</summary>
     double? Finish(TripInfo trip, IReadOnlyList<CrossingRow> rows, DayType dayType, double serviceOrigin, double now,

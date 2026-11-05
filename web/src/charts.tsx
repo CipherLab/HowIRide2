@@ -423,8 +423,12 @@ function RouteChart({ mode }: { mode: Mode }) {
 
 /** Typical miss 10 minutes ahead in each scoring run, oldest first. */
 function RunHistory({ runs, mode }: { runs: Score[]; mode: Mode }) {
-  const at = runs.filter((r) => r.group === mode && r.horizon === ROUTE_HORIZON)
-  const times = [...new Set(at.map((r) => r.runAt))].sort()
+  // One point per service day, from its latest run; runs by hand over part of a day or several days don't compare.
+  const at = runs.filter((r) => r.group === mode && r.horizon === ROUTE_HORIZON && r.testFrom === r.testTo && /^\d{8}$/.test(r.testFrom))
+  const latest = new Map<string, string>()
+  for (const r of at) if (r.runAt > (latest.get(r.testFrom) ?? '')) latest.set(r.testFrom, r.runAt)
+  const days = [...latest.keys()].sort()
+  const times = days.map((d) => latest.get(d)!)
   if (times.length < 2) return null
   const series = (['ours', 'metro'] as Key[]).map((key) => ({
     key,
@@ -432,16 +436,13 @@ function RunHistory({ runs, mode }: { runs: Score[]; mode: Mode }) {
       .map((t, i) => ({ x: i, y: at.find((r) => r.runAt === t && r.predictor === PREDICTOR[key])?.medianAbs ?? null }))
       .filter((p): p is { x: number; y: number } => p.y != null),
   }))
-  const labels = times.map((t) => {
-    const d = new Date(t)
-    return `${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '')}`
-  })
+  const labels = days.map((d) => `${Number(d.slice(4, 6))}/${Number(d.slice(6, 8))}`)
   return (
     <div className="section">
-      <h2>Each scoring run, {ROUTE_HORIZON} minutes ahead</h2>
+      <h2>Each service day, {ROUTE_HORIZON} minutes ahead</h2>
       <p className="hint">
-        One point per run. So far these are runs made by hand while tuning the model, some on part of a day; a nightly run adds
-        one point per service day.
+        One point per day, added by the nightly run. Each day is scored on tables learned only from the days before it.
+        Saturdays and Sundays are easier for Metro and have less history for us, so compare weekdays with weekdays.
       </p>
       <LineChart
         title="Typical miss"

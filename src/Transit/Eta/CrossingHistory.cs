@@ -64,10 +64,19 @@ public sealed class CrossingHistory
         cmd.Parameters.AddWithValue("$from", fromServiceDate);
         cmd.Parameters.AddWithValue("$to", toServiceDate);
         using var r = cmd.ExecuteReader();
+        // Every row repeats a few thousand ids; sharing one copy of each took about a sixth off a backtest's peak memory.
+        var pool = new HashSet<string>();
+        string Shared(int column)
+        {
+            var value = r.GetString(column);
+            if (pool.TryGetValue(value, out var existing)) return existing;
+            pool.Add(value);
+            return value;
+        }
         var rows = new List<CrossingRow>();
         while (r.Read())
-            rows.Add(new CrossingRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetString(4),
-                r.IsDBNull(5) ? null : r.GetString(5), r.GetBoolean(6), r.GetDouble(7), N(r, 8), N(r, 9), N(r, 10), N(r, 11), r.GetBoolean(12)));
+            rows.Add(new CrossingRow(Shared(0), Shared(1), Shared(2), r.GetInt32(3), Shared(4),
+                r.IsDBNull(5) ? null : Shared(5), r.GetBoolean(6), r.GetDouble(7), N(r, 8), N(r, 9), N(r, 10), N(r, 11), r.GetBoolean(12)));
         return new CrossingHistory(rows.GroupBy(x => (x.ServiceDate, x.TripId)).ToDictionary(g => g.Key, g => g.ToArray()));
 
         static double? N(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDouble(i);
@@ -88,6 +97,14 @@ public sealed class CrossingHistory
                     end + (c.ArriveGap ?? 0) + SegmentObservation.FeedLagSeconds);
             }
         }
+    }
+
+    /// <summary>Every trip's departure from its first stop. A trip first seen further along has none: that's tracking starting late, not the bus.</summary>
+    public IEnumerable<(string CheckpointId, string ServiceDate, string TripId, double Depart)> Starts()
+    {
+        foreach (var (key, rows) in _byTrip)
+            if (rows is [{ Index: 0, Detour: false, Depart: { } depart } first, ..])
+                yield return (first.CheckpointId, key.Date, key.Trip, depart);
     }
 
     /// <summary>Every clean dwell: time inside a stop zone, excluding trip ends and holds over 15 minutes.</summary>

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using Transit.Archive;
+using Transit.Backtest;
 using Transit.Crossings;
 using Transit.Eta;
 using Transit.Gtfs;
@@ -23,6 +24,9 @@ public sealed class ApiOptions
 
     /// <summary>Days of crossings history the live v0/v1 tables are learned from.</summary>
     public int HistoryDays { get; set; } = 14;
+
+    /// <summary>Where a sample of the live predictions is archived each minute, so they can be scored later.</summary>
+    public string PredictionLogDir { get; set; } = "derived/live-predictions";
 }
 
 public sealed record VehicleView(
@@ -51,6 +55,8 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     static readonly TimeSpan VehicleExpiry = TimeSpan.FromMinutes(5);
     static readonly TimeSpan PaceRefresh = TimeSpan.FromMinutes(1);
     static readonly TimeSpan RecentTripExpiry = TimeSpan.FromHours(4);
+    /// <summary>Older positions than this mean we're replaying the warm-up or the feed has stalled: nothing a rider saw is worth logging.</summary>
+    static readonly TimeSpan MaxLoggedVehicleAge = TimeSpan.FromMinutes(2);
 
     readonly object _gate = new();
     readonly FeedSet _feeds = new(
@@ -71,6 +77,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
 
     public Task Ready => _ready.Task;
     public TimeZoneInfo Zone => _feeds.Feeds[0].TimeZone;
+    public TripInfo? ResolveTrip(string tripId) => _feeds.Resolve(tripId)?.Trip;
 
     public void LoadStatic()
     {
@@ -316,6 +323,31 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             }
             return result.OrderBy(r => r.Sort).Take(limit).Select(r => r.D).ToArray();
         }
+    }
+
+    /// <summary>
+    /// v1's departure times for every trip that may be running within the window, or null when it isn't serving live
+    /// predictions. Copies what it needs under the lock and predicts outside it, so requests don't wait on this.
+    /// </summary>
+    public IReadOnlyList<LiveTripPrediction>? SamplePredictions(double windowSeconds)
+    {
+        SegmentStats stats;
+        RecentPace pace;
+        List<(string Date, string Trip)> candidates;
+        Dictionary<(string Date, string Trip), CrossingRow[]> recent;
+        lock (_gate)
+        {
+            if (_stats is null || _pace is null || _vehiclesFetchedAt is not { } fetched || clock.GetUtcNow() - fetched > MaxLoggedVehicleAge)
+                return null;
+            (stats, pace) = (_stats, _pace);
+            candidates = _metro.Keys
+                .Union(_vehicles.Values.Where(v => v.TripId is not null && v.ServiceDate is not null).Select(v => (v.ServiceDate!, v.TripId!)))
+                .ToList();
+            recent = _recent.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
+        }
+        TripInfo? Resolve(string id) => _feeds.Resolve(id)?.Trip;
+        var model = new SegmentEtaPredictor("v1", stats, pace, CrossingHistory.From([]), Resolve, Zone) { UseBlocks = true };
+        return LivePredictionSampler.Sample(model, candidates, Resolve, (date, trip) => recent.GetValueOrDefault((date, trip)) ?? [], Zone, Now(), windowSeconds);
     }
 
     /// <summary>Every predictor's departure time for one stop of a trip, as of now.</summary>

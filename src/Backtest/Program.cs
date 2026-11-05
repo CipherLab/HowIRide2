@@ -16,6 +16,8 @@ const string Usage = """
       --store <path>       cache of replayed predictions and score history (default: next to --db, backtest.db)
       --routes-csv <path>  also write every score broken down by route
       --learning-curve     also score v1 with history tables from 25% and 50% of the training trips
+      --corrections        also fit and score the +cap and metro+median corrections; predicts every training day, so it's slow
+      --live-log <dir>     also score what the live API predicted, from its log (see LivePredictionLog)
       --checkpoint-report  just print how many road segments each checkpoint layout shares between routes
     """;
 
@@ -91,12 +93,14 @@ else
 }
 var trainFrom = DateTime.ParseExact(testFrom, "yyyyMMdd", CultureInfo.InvariantCulture).AddDays(-trainDays).ToString("yyyyMMdd");
 
-var targets = BacktestTargets.Load(dbPath, trainFrom, testTo);
+// Only the corrections need predictions for the training days; the history tables below still learn from them.
+var corrections = opts.ContainsKey("corrections");
+var targets = BacktestTargets.Load(dbPath, corrections ? trainFrom : testFrom, testTo);
 bool IsTest(BacktestTarget t) => splitAt is { } at ? t.Actual >= at : string.CompareOrdinal(t.ServiceDate, testFrom) >= 0;
 var test = Enumerable.Range(0, targets.Count).Where(i => IsTest(targets[i])).ToList();
 var train = Enumerable.Range(0, targets.Count).Where(i => !IsTest(targets[i])).ToList();
 var testLabel = splitAt is { } s ? $"after {s:yyyy-MM-dd HH:mm}Z" : testFrom == testTo ? testFrom : $"{testFrom}-{testTo}";
-Console.WriteLine($"test {testLabel}: {test.Count:N0} departures | train {trainFrom} onward: {train.Count:N0} departures ({clock.Elapsed.TotalSeconds:F0}s)");
+Console.WriteLine($"test {testLabel}: {test.Count:N0} departures | history from {trainFrom}{(corrections ? $", {train.Count:N0} training departures" : "")} ({clock.Elapsed.TotalSeconds:F0}s)");
 if (test.Count == 0) return 1;
 
 // Metro's predictions: replayed from the archive per service date, cached once a day is complete.
@@ -118,9 +122,10 @@ foreach (var day in Enumerable.Range(0, targets.Count).GroupBy(i => targets[i].S
         for (var h = 0; h < Horizons.Minutes.Length; h++)
             metro[indices[k], h] = dayTable[k, h];
     // A day is complete once its last departure is well past; partial days are recomputed next time.
-    var complete = now - dayTargets.Max(t => t.Actual) > TimeSpan.FromHours(6);
-    if (complete) store.Save(tripUpdates.Name, day.Key, targets, indices, metro);
-    Console.WriteLine($"  {day.Key}: replayed {dayTargets.Count:N0} departures{(complete ? ", cached" : "")} ({clock.Elapsed.TotalSeconds:F0}s)");
+    // Only training days get read back, so a run without corrections has nothing worth caching (a day is ~65 MB).
+    var cache = corrections && now - dayTargets.Max(t => t.Actual) > TimeSpan.FromHours(6);
+    if (cache) store.Save(tripUpdates.Name, day.Key, targets, indices, metro);
+    Console.WriteLine($"  {day.Key}: replayed {dayTargets.Count:N0} departures{(cache ? ", cached" : "")} ({clock.Elapsed.TotalSeconds:F0}s)");
 }
 
 var schedule = new PredictionTable(targets.Count);
@@ -131,6 +136,7 @@ var tables = new List<(string Name, PredictionTable Table)> { ("schedule", sched
 // typical miss but never so far that more than 5% of training buses would leave early; metro+median is uncapped.
 void AddCorrected(string baseName, PredictionTable baseTable)
 {
+    if (!corrections) return;
     var samples = LeadTimeCorrection.Samples(targets, baseTable, train).ToList();
     if (samples.Count == 0)
     {
@@ -143,12 +149,22 @@ void AddCorrected(string baseName, PredictionTable baseTable)
 }
 AddCorrected(tripUpdates.Name, metro);
 
+if (opts.GetValueOrDefault("live-log") is { } liveLog && Directory.Exists(liveLog))
+{
+    var live = new LivePredictor(liveLog);
+    var table = new PredictionTable(targets.Count);
+    live.Fill(targets, table);
+    tables.Add((live.Name, table));
+    Console.WriteLine($"  scored {live.Name} ({clock.Elapsed.TotalSeconds:F0}s)");
+}
+
 // v0/v1: medians learned only from crossings that ended before the test window; live state from anything knowable at query time.
 var history = CrossingHistory.Load(dbPath, trainFrom, testTo);
 var calendar = new ServiceCalendar(zone);
 bool InTraining(string serviceDate, double endUnix) =>
     splitAt is { } cut ? endUnix < cut.ToUnixTimeSeconds() : string.CompareOrdinal(serviceDate, testFrom) < 0;
-var stats = SegmentStats.Build(history, calendar, InTraining);
+var scheduledStarts = SegmentStats.ScheduledStarts(id => feeds.Resolve(id)?.Trip, zone);
+var stats = SegmentStats.Build(history, calendar, InTraining, scheduledStart: scheduledStarts);
 Console.WriteLine($"  v0 tables: {stats.TravelTable.Keys:N0} segments, {stats.DwellTable.Keys:N0} stops from {history.Trips:N0} trips ({clock.Elapsed.TotalSeconds:F0}s)");
 if (stats.TravelTable.Keys > 0)
 {
@@ -166,7 +182,7 @@ if (stats.TravelTable.Keys > 0)
 
     // v1-mean: the same v1 on tables of trimmed means (10% cut from each end), which add up along a trip where medians don't.
     {
-        var meanStats = SegmentStats.Build(history, calendar, InTraining, trim: 0.1);
+        var meanStats = SegmentStats.Build(history, calendar, InTraining, trim: 0.1, scheduledStart: scheduledStarts);
         var model = new SegmentEtaPredictor("v1-mean", meanStats, RecentPace.Build(history, meanStats), history, Resolve, zone) { UseBlocks = true };
         var table = new PredictionTable(targets.Count);
         model.Fill(targets, table);
@@ -180,7 +196,7 @@ if (stats.TravelTable.Keys > 0)
         foreach (var share in new[] { 0.25, 0.5 })
         {
             var sampled = history.Where((date, trip) => !InTraining(date, double.MaxValue) || Bucket(trip) < share);
-            var sampledStats = SegmentStats.Build(sampled, calendar, InTraining);
+            var sampledStats = SegmentStats.Build(sampled, calendar, InTraining, scheduledStart: scheduledStarts);
             var model = new SegmentEtaPredictor($"v1@{share:P0}".Replace(" ", ""), sampledStats, RecentPace.Build(history, sampledStats), history, Resolve, zone) { UseBlocks = true };
             var table = new PredictionTable(targets.Count);
             model.Fill(targets, table);
@@ -272,7 +288,7 @@ static Dictionary<string, string?>? ParseOptions(string[] args)
     {
         if (!args[i].StartsWith("--")) return null;
         var name = args[i][2..];
-        opts[name] = name is "yesterday" or "learning-curve" or "checkpoint-report" ? null : i + 1 < args.Length ? args[++i] : null;
+        opts[name] = name is "yesterday" or "learning-curve" or "checkpoint-report" or "corrections" ? null : i + 1 < args.Length ? args[++i] : null;
     }
     return opts;
 }

@@ -30,13 +30,21 @@ services:
     logging: *logging
 
   # Scores predictors against observed departures. Not a long-running service: run on demand or by the
-  # nightly systemd timer (deploy/transit-backtest.timer) with `docker compose run --rm backtest --yesterday ...`.
+  # nightly systemd timer (deploy/transit-backtest.timer) with `docker compose run --rm -T backtest`.
+  # The limits live here because the container isn't a child of the systemd unit, so the unit's Nice= wouldn't reach it.
+  # The Pi boots with cgroup_disable=memory, so Docker's mem_limit does nothing there: the heap is capped by .NET instead (3 GB, in hex).
+  # If the node still runs short of memory, this is what the kernel kills first: a missed score, never a missed recording.
   backtest:
     build:
       context: .
       args: { PROJECT: Backtest }
     profiles: [tools]
-    command: ["--data", "/data", "--db", "/derived/crossings.db", "--yesterday"]
+    command: ["--data", "/data", "--db", "/derived/crossings.db", "--yesterday", "--live-log", "/derived/live-predictions"]
+    environment:
+      DOTNET_GCHeapHardLimit: "0xC0000000"
+    cpus: 2.0
+    cpu_shares: 128
+    oom_score_adj: 1000
     volumes:
       - ./data:/data:ro
       - ./derived:/derived
@@ -70,8 +78,9 @@ services:
       Api__DataDir: /data
       Api__DbPath: /derived/crossings.db
       Api__BacktestDbPath: /derived/backtest.db
+      Api__PredictionLogDir: /derived/live-predictions
     volumes:
       - ./data:/data:ro
-      # Read-write only because SQLite needs its -shm file to read a WAL database; the API never writes.
+      # Read-write because SQLite needs its -shm file to read a WAL database, and for the live prediction log.
       - ./derived:/derived
     logging: *logging

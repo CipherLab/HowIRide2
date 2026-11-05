@@ -43,7 +43,40 @@ public sealed class TripUpdatesPredictor(string feedDir) : IPredictor
 
     public long Snapshots { get; private set; }
 
-    public void Fill(IReadOnlyList<BacktestTarget> targets, PredictionTable table)
+    public void Fill(IReadOnlyList<BacktestTarget> targets, PredictionTable table) =>
+        LatestSnapshot.Fill(targets, table, MaxSnapshotAge, (from, to) => ArchiveFollower.ReadRange(feedDir, from, to).Select(record =>
+        {
+            Snapshots++;
+            return (record.FetchedAt.ToUnixTimeMilliseconds() / 1000.0, Rows(FeedMessage.Parser.ParseFrom(record.Payload)));
+        }));
+
+    static IEnumerable<(string Date, string Trip, int Sequence, double Predicted)> Rows(FeedMessage message)
+    {
+        foreach (var entity in message.Entity)
+        {
+            if (entity.TripUpdate is not { Trip: { } trip } update || trip.ScheduleRelationship == TripRelationship.Canceled)
+                continue;
+            foreach (var stu in update.StopTimeUpdate)
+            {
+                if (!stu.HasStopSequence || stu.ScheduleRelationship != StopTimeRelationship.Scheduled)
+                    continue;
+                // Metro publishes departure times; arrival is the rare fallback.
+                var predicted = stu.Departure is { HasTime: true } d ? d.Time : stu.Arrival is { HasTime: true } a ? a.Time : (long?)null;
+                if (predicted is not null)
+                    yield return (trip.StartDate, trip.TripId, (int)stu.StopSequence, predicted.Value);
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Replays recorded prediction snapshots against the targets. At each query time only the latest snapshot counts: that is
+/// all a rider could see, so a stop missing from it has no prediction, and a snapshot older than the limit means a gap.
+/// </summary>
+static class LatestSnapshot
+{
+    public static void Fill(IReadOnlyList<BacktestTarget> targets, PredictionTable table, TimeSpan maxAge,
+        Func<DateTimeOffset, DateTimeOffset, IEnumerable<(double Fetched, IEnumerable<(string Date, string Trip, int Sequence, double Predicted)> Rows)>> read)
     {
         if (targets.Count == 0) return;
         var horizons = Horizons.Minutes.Length;
@@ -63,36 +96,20 @@ public sealed class TripUpdatesPredictor(string feedDir) : IPredictor
                 query[i * horizons + h] = actual - Horizons.Minutes[h] * 60;
         }
 
-        var from = targets.Min(t => t.Actual) - Horizons.Max - MaxSnapshotAge;
-        var to = targets.Max(t => t.Actual);
         var snapshotTimes = new List<double>();
-        foreach (var record in ArchiveFollower.ReadRange(feedDir, from, to))
+        foreach (var (fetched, rows) in read(targets.Min(t => t.Actual) - Horizons.Max - maxAge, targets.Max(t => t.Actual)))
         {
-            var fetched = record.FetchedAt.ToUnixTimeMilliseconds() / 1000.0;
             snapshotTimes.Add(fetched);
-            Snapshots++;
-            foreach (var entity in FeedMessage.Parser.ParseFrom(record.Payload).Entity)
+            foreach (var (date, trip, sequence, predicted) in rows)
             {
-                if (entity.TripUpdate is not { Trip: { } trip } update || trip.ScheduleRelationship == TripRelationship.Canceled)
+                if (!index.TryGetValue((date, trip), out var stops) || !stops.TryGetValue(sequence, out var i))
                     continue;
-                if (!index.TryGetValue((trip.StartDate, trip.TripId), out var stops))
-                    continue;
-                foreach (var stu in update.StopTimeUpdate)
+                for (var h = 0; h < horizons; h++)
                 {
-                    if (!stu.HasStopSequence || stu.ScheduleRelationship != StopTimeRelationship.Scheduled)
-                        continue;
-                    if (!stops.TryGetValue((int)stu.StopSequence, out var i))
-                        continue;
-                    // Metro publishes departure times; arrival is the rare fallback.
-                    var predicted = stu.Departure is { HasTime: true } d ? d.Time : stu.Arrival is { HasTime: true } a ? a.Time : (long?)null;
-                    if (predicted is null) continue;
-                    for (var h = 0; h < horizons; h++)
-                    {
-                        var k = i * horizons + h;
-                        if (fetched > query[k]) continue;
-                        table[i, h] = predicted.Value;
-                        issued[k] = fetched;
-                    }
+                    var k = i * horizons + h;
+                    if (fetched > query[k]) continue;
+                    table[i, h] = predicted;
+                    issued[k] = fetched;
                 }
             }
         }
@@ -107,7 +124,7 @@ public sealed class TripUpdatesPredictor(string feedDir) : IPredictor
                 if (double.IsNaN(issued[k])) continue;
                 var at = Array.BinarySearch(times, query[k]);
                 var latest = times[at >= 0 ? at : ~at - 1];
-                if (issued[k] != latest || query[k] - latest > MaxSnapshotAge.TotalSeconds)
+                if (issued[k] != latest || query[k] - latest > maxAge.TotalSeconds)
                     table[i, h] = double.NaN;
             }
         }

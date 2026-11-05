@@ -12,6 +12,7 @@ builder.Services.AddHostedService<StaticLoader>();
 builder.Services.AddHostedService<VehicleFollower>();
 builder.Services.AddHostedService<TripUpdatesFollower>();
 builder.Services.AddHostedService<ModelRefresher>();
+builder.Services.AddHostedService<PredictionLogger>();
 
 var app = builder.Build();
 app.UseDefaultFiles();
