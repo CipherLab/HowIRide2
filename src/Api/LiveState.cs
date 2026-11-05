@@ -46,7 +46,7 @@ public sealed record VehicleDetail(VehicleView Vehicle, StopTime[] NextStops);
 
 public sealed record Departure(
     string TripId, string RouteId, string Route, string Color, string TextColor, string Headsign, string? VehicleId,
-    double? Scheduled, double? Metro, double? V0, double? V1, double? BeBy);
+    double? Scheduled, double? Metro, double? V0, double? V1, double? BeBy, int DirectionId, double Dist, string ShapeId);
 
 /// <summary>
 /// Everything the live API serves, fed by the archive followers. One lock guards it all: updates arrive about
@@ -304,7 +304,8 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
         }
     }
 
-    public Departure[] Departures(string stopId, int limit = 20)
+    /// <param name="routeId">With <paramref name="directionId"/>, only that route and direction, filtered before the limit so a busy stop's other routes can't crowd it out.</param>
+    public Departure[] Departures(string stopId, int limit = 20, string? routeId = null, int? directionId = null)
     {
         lock (_gate)
         {
@@ -313,22 +314,27 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             var vehiclesByTrip = _vehicles.Values.Where(v => v.TripId is not null && v.ServiceDate is not null)
                 .GroupBy(v => (v.ServiceDate!, v.TripId!)).ToDictionary(g => g.Key, g => g.First());
             var candidates = _metro.Keys.Union(vehiclesByTrip.Keys).ToList();
-            var patterns = entries.ToDictionary(e => e.Pattern, e => e.Checkpoint);
+            // A loop can visit the stop twice on one trip, so a pattern can have more than one checkpoint here.
+            var visits = entries.ToLookup(e => e.Pattern, e => e.Checkpoint);
 
             var result = new List<(double Sort, Departure D)>();
             foreach (var (date, tripId) in candidates)
             {
-                if (_feeds.Resolve(tripId)?.Trip is not { } trip || !patterns.TryGetValue(trip.Pattern, out var cpIndex) || cpIndex == 0)
+                if (_feeds.Resolve(tripId)?.Trip is not { } trip || !visits.Contains(trip.Pattern))
+                    continue;
+                if ((routeId is not null && trip.RouteId != routeId) || (directionId is not null && trip.DirectionId != directionId))
                     continue;
                 var vehicle = vehiclesByTrip.GetValueOrDefault((date, tripId));
-                if (vehicle is not null && _detector!.Trackers.GetValueOrDefault(vehicle.Id) is { } tr && tr.TripId == tripId && tr.NextCheckpoint > cpIndex)
-                    continue; // already gone
+                var next = vehicle is not null && _detector!.Trackers.GetValueOrDefault(vehicle.Id) is { } tr && tr.TripId == tripId ? tr.NextCheckpoint : 0;
+                // The first visit still ahead. None left means it's already gone; a trip's first stop never counts.
+                var cpIndex = visits[trip.Pattern].Where(c => c >= Math.Max(1, next)).DefaultIfEmpty(-1).Min();
+                if (cpIndex < 0) continue;
                 var st = StopTimeAt(trip, date, trip.Pattern.Checkpoints[cpIndex]);
                 var best = st.V1 ?? st.Metro ?? st.Scheduled;
                 if (best is null || best < now - 60 || best > now + 90 * 60) continue;
                 var route = RouteOf(trip.RouteId);
                 result.Add((best.Value, new Departure(tripId, trip.RouteId, route?.ShortName ?? trip.RouteId, route?.Color ?? "4F5B66",
-                    route?.TextColor ?? "FFFFFF", trip.Headsign, vehicle?.Id, st.Scheduled, st.Metro, st.V0, st.V1, st.BeBy)));
+                    route?.TextColor ?? "FFFFFF", trip.Headsign, vehicle?.Id, st.Scheduled, st.Metro, st.V0, st.V1, st.BeBy, trip.DirectionId, st.Dist, trip.Pattern.ShapeId)));
             }
             return result.OrderBy(r => r.Sort).Take(limit).Select(r => r.D).ToArray();
         }

@@ -35,8 +35,8 @@ api.MapGet("/stops", (string bbox, LiveState s) =>
     var b = bbox.Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray();
     return b.Length == 4 ? Results.Ok(s.StopsIn(b[0], b[1], b[2], b[3])) : Results.BadRequest("bbox=south,west,north,east");
 });
-api.MapGet("/stops/{id}", (string id, LiveState s) =>
-    s.Stop(id) is { } stop ? Results.Ok(new { stop, departures = s.Departures(id) }) : Results.NotFound());
+api.MapGet("/stops/{id}", (string id, string? route, int? direction, LiveState s) =>
+    s.Stop(id) is { } stop ? Results.Ok(new { stop, departures = s.Departures(id, routeId: route, directionId: direction) }) : Results.NotFound());
 
 // Vehicle snapshots as server-sent events, one per VehiclePositions update (~10 s).
 api.MapGet("/stream", async (HttpContext ctx, LiveState s, CancellationToken ct) =>
