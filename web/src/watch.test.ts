@@ -90,6 +90,39 @@ describe('planWatch', () => {
     expect(plan.note).toBe(`No bus on the road yet. Next: ${clock(t)}, timetable`)
   })
 
+  it('ignores a trip with no bus whose only time is a timetable time already past', () => {
+    const plan = planWatch([dep({ scheduled: NOW - 1800, v1: NOW }), dep({ vehicleId: 'a', v1: 1240 })], NOW)
+    expect(plan.first?.vehicleId).toBe('a')
+    expect(plan.note).toBeNull()
+  })
+
+  it('still warns about a timetable time that has only just passed', () => {
+    const plan = planWatch([dep({ scheduled: NOW - 30 }), dep({ vehicleId: 'a', v1: 1240 })], NOW)
+    expect(plan.note).toBe('The timetable lists a trip due now, no bus located yet')
+  })
+
+  it('still warns when Metro expects a trip whose timetable time has passed', () => {
+    const plan = planWatch([dep({ scheduled: NOW - 240, metro: NOW + 360 }), dep({ vehicleId: 'a', v1: 1900 })], NOW)
+    expect(plan.note).toBe('Metro lists a trip in 6 min, no bus located yet')
+  })
+
+  it('does not offer a past timetable time as what comes after a lone bus', () => {
+    const plan = planWatch([dep({ vehicleId: 'a', v1: 1240 }), dep({ scheduled: NOW - 1800, v1: 1300 })], NOW)
+    expect(plan.note).toBeNull()
+  })
+
+  it('does not offer a past timetable time as the next trip with no bus on the road', () => {
+    const plan = planWatch([dep({ scheduled: NOW - 1800, v1: NOW })], NOW)
+    expect(plan.first).toBeNull()
+    expect(plan.note).toBe('No bus on the road yet')
+  })
+
+  it('skips a past timetable time to name the next real trip', () => {
+    const t = NOW + 1200
+    const plan = planWatch([dep({ scheduled: NOW - 1800, v1: NOW }), dep({ scheduled: t })], NOW)
+    expect(plan.note).toBe(`No bus on the road yet. Next: ${clock(t)}, timetable`)
+  })
+
   it('says when nothing is due', () => {
     const plan = planWatch([], NOW)
     expect(plan.first).toBeNull()

@@ -38,25 +38,28 @@ const QUIET_S = 60
 const MAP_BEHIND_S = 120
 const BUS_SILENT_S = 120
 
+/** A timetable time further past than this isn't a trip that's due; Metro has stopped tracking it and no bus is on it. */
+const TIMETABLE_PAST_S = 60
+
 const BUS_MIN_ZOOM = 12.5
 const WORTH_ZOOMING_OUT = 1
 
 const toBus = (d: Departure): WatchBus => ({ vehicleId: d.vehicleId!, at: d.v1 ?? d.v0 ?? d.metro, dist: d.dist, shapeId: d.shapeId })
 
 /** A trip with no bus attached has only these to go on, so they can be named in the text. */
-function listed(d: Departure) {
+function listed(d: Departure, now: number) {
   if (d.metro != null) return { at: d.metro, words: 'Metro', sentence: 'Metro' }
-  if (d.scheduled != null) return { at: d.scheduled, words: 'timetable', sentence: 'The timetable' }
+  if (d.scheduled != null && d.scheduled >= now - TIMETABLE_PAST_S) return { at: d.scheduled, words: 'timetable', sentence: 'The timetable' }
   return null
 }
 
 export function planWatch(departures: Departure[], now: number): WatchPlan {
   const buses = departures.filter((d) => d.vehicleId != null)
-  const noBus = (from: number, to: number) => departures.slice(from, to).filter((d) => d.vehicleId == null && listed(d))[0]
+  const noBus = (from: number, to: number) => departures.slice(from, to).filter((d) => d.vehicleId == null && listed(d, now))[0]
   if (buses.length === 0) {
     if (departures.length === 0) return { first: null, second: null, note: 'Nothing due here in the next 90 minutes' }
     const next = noBus(0, departures.length)
-    const trip = next && listed(next)
+    const trip = next && listed(next, now)
     return { first: null, second: null, note: trip ? `No bus on the road yet. Next: ${clock(trip.at)}, ${trip.words}` : 'No bus on the road yet' }
   }
 
@@ -65,14 +68,14 @@ export function planWatch(departures: Departure[], now: number): WatchPlan {
   const firstIndex = departures.indexOf(buses[0])
   const ahead = noBus(0, firstIndex)
   if (ahead) {
-    const trip = listed(ahead)!
+    const trip = listed(ahead, now)!
     const minutes = Math.round((trip.at - now) / 60)
     return { first, second, note: `${trip.sentence} lists a trip ${minutes <= 0 ? 'due now' : `in ${minutes} min`}, no bus located yet` }
   }
   if (first.at == null) return { first, second, note: 'Bus on the way, no estimate yet' }
   const after = second ? null : noBus(firstIndex + 1, departures.length)
   if (after) {
-    const trip = listed(after)!
+    const trip = listed(after, now)!
     return { first, second, note: `After this one: ${clock(trip.at)}, ${trip.words}` }
   }
   return { first, second, note: null }
