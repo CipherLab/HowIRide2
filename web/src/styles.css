@@ -1237,3 +1237,60 @@ details.more[open] summary {
 .watch-recentre:hover {
   background: var(--snow);
 }
+
+/* A bus's time, riding above it on the map. */
+
+.watch-bubble {
+  z-index: 1;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--amber);
+  font-family: var(--font-text);
+  font-size: 20px;
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgb(20 33 43 / 0.3);
+  cursor: pointer;
+}
+
+.watch-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-bottom: 0;
+  border-top-color: var(--ink);
+}
+
+/* If the two meet, the bus coming next stays readable. */
+.watch-bubble.quiet {
+  z-index: 0;
+  padding: 2px 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.watch-bubble.quiet::after {
+  border-top-color: var(--paper);
+}
+
+/* Off screen, it's a label waiting at the edge, not pointing at anything. */
+.watch-bubble.edge::after {
+  display: none;
+}
+
+/* Old data mustn't look like a confident time. */
+.watch-bubble.stale {
+  background: #d9e1e6;
+  color: #51606c;
+  box-shadow: none;
+}
+
+.watch-bubble.stale::after {
+  border-top-color: #d9e1e6;
+}

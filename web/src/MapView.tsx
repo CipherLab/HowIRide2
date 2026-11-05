@@ -1,4 +1,4 @@
-import { GeolocateControl, LngLatBounds, Map as MapLibre, NavigationControl, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
+import { GeolocateControl, LngLatBounds, Map as MapLibre, Marker, NavigationControl, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { FeatureCollection } from 'geojson'
 import { useQuery } from '@tanstack/react-query'
@@ -7,7 +7,7 @@ import { api, isRapid, type StopTime } from './api'
 import { pointAt, type LiveVehicles, type Placed } from './live'
 import type { WatchView } from './useWatch'
 import { ARROW_ICON, arrowIcon, STOP_ICON, stopIcon } from './vehicleIcon'
-import type { Selection } from './watch'
+import { busIsStale, edgePoint, minutesLabel, shouldFrameSecond, type Selection, type WatchBus } from './watch'
 
 // MapLibre 6 runs tile work in a separate worker file; bundlers must ship it and say where it is.
 setWorkerUrl(mapWorkerUrl)
@@ -48,28 +48,146 @@ function keepCentred(map: MapLibre, p: Placed) {
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
+/** How often the watching map re-frames itself, and how much has to change to be worth moving for. */
+const WATCH_FIT_MS = 5000
+const WATCH_MIN_ZOOM_CHANGE = 0.15
+const WATCH_MIN_MOVE_PX = 24
+const WATCH_MAX_ZOOM = 16
+const WATCH_NO_BUS_ZOOM = 15
+/** Room for a bubble above a bus at the top of the frame. */
+const BUBBLE_ROOM_PX = 56
+const FRAME_MARGIN_PX = 40
+/** Keeps an off-screen bus's label clear of the panel's folded rail. */
+const EDGE_INSET_PX = 64
+
+function searchHeight() {
+  return parseFloat(document.documentElement.style.getPropertyValue('--search-h')) || 0
+}
+
+/** Everything the camera has to keep clear of while watching. */
+function watchPadding() {
+  const panel = panelPadding()
+  return {
+    top: searchHeight() + 12 + BUBBLE_ROOM_PX,
+    right: FRAME_MARGIN_PX,
+    bottom: panel.bottom + FRAME_MARGIN_PX,
+    left: panel.left + FRAME_MARGIN_PX,
+  }
+}
+
+type LonLat = { lon: number; lat: number }
+
+/** Frame the stop and its buses, or just the stop and first bus when fitting the second would shrink everything. */
+function frameWatch(map: MapLibre, stop: LonLat, first: LonLat | undefined, second: LonLat | undefined, beforeMove: () => void) {
+  // Following a bus leaves padding set on the map, which would throw these cameras off centre.
+  map.setPadding({ top: 0, right: 0, bottom: 0, left: 0 })
+  const padding = watchPadding()
+  const fit = (points: LonLat[]) => {
+    const bounds = new LngLatBounds()
+    for (const p of points) bounds.extend([p.lon, p.lat])
+    return map.cameraForBounds(bounds, { padding, maxZoom: WATCH_MAX_ZOOM })
+  }
+  const withFirst = first ? fit([stop, first]) : fit([stop])
+  const withBoth = first && second ? fit([stop, first, second]) : undefined
+  const useBoth = withBoth?.zoom != null && withFirst?.zoom != null && shouldFrameSecond(withBoth.zoom, withFirst.zoom)
+  const target = useBoth ? withBoth : withFirst
+  if (!target?.center) return
+  const zoom = first ? (target.zoom ?? map.getZoom()) : WATCH_NO_BUS_ZOOM
+  const from = map.project(map.getCenter())
+  const to = map.project(target.center)
+  if (Math.abs(zoom - map.getZoom()) < WATCH_MIN_ZOOM_CHANGE && Math.hypot(from.x - to.x, from.y - to.y) < WATCH_MIN_MOVE_PX) return
+  beforeMove()
+  map.easeTo({ center: target.center, zoom, duration: REDUCED_MOTION.matches ? 0 : 800, essential: false })
+}
+
+/** A bus's time, riding above it on the map. */
+class Bubble {
+  private readonly el = document.createElement('button')
+  private readonly marker = new Marker({ element: this.el, anchor: 'bottom', offset: [0, -16] })
+  private shown = false
+
+  private readonly map: MapLibre
+
+  constructor(map: MapLibre, quiet: boolean, onTap: (vehicleId: string) => void) {
+    this.map = map
+    this.el.type = 'button'
+    // Added to, not assigned: the Marker has already put its own class here, and needs it to position the bubble.
+    this.el.classList.add('watch-bubble')
+    this.el.classList.toggle('quiet', quiet)
+    this.el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (this.el.dataset.vehicle) onTap(this.el.dataset.vehicle)
+    })
+  }
+
+  hide() {
+    if (this.shown) this.marker.remove()
+    this.shown = false
+  }
+
+  /** Off screen, the label waits at the edge in the bus's direction instead. */
+  update(bus: WatchBus | null | undefined, placed: Placed | undefined, nowS: number, dataStale: boolean) {
+    if (!bus || bus.at == null || !placed) return this.hide()
+    const onScreen = this.map.getBounds().contains([placed.lon, placed.lat])
+    let at: [number, number] = [placed.lon, placed.lat]
+    if (!onScreen) {
+      const canvas = this.map.getCanvas()
+      const [width, height] = [canvas.clientWidth, canvas.clientHeight]
+      const top = searchHeight() + 12
+      const to = this.map.project(at)
+      const p = edgePoint({ x: width / 2, y: (height - top) / 2 }, { x: to.x, y: to.y - top }, { width, height: height - top }, EDGE_INSET_PX)
+      const lngLat = this.map.unproject([p.x, p.y + top])
+      at = [lngLat.lng, lngLat.lat]
+    }
+    const text = minutesLabel(bus.at, nowS)
+    if (this.el.textContent !== text) this.el.textContent = text
+    this.el.dataset.vehicle = bus.vehicleId
+    this.el.setAttribute('aria-label', `${placed.vehicle.route ?? 'Bus'}: ${text}. Show this bus`)
+    this.el.classList.toggle('stale', dataStale || busIsStale(placed.vehicle.pingAt, nowS))
+    this.el.classList.toggle('edge', !onScreen)
+    this.marker.setLngLat(at)
+    if (!this.shown) this.marker.addTo(this.map)
+    this.shown = true
+  }
+}
+
 /**
  * Dots along the shape from a placed bus to its next stop, plus a ring on the stop. They're spaced in screen
  * pixels so they read the same at any zoom, and drift toward the stop so the direction is plain.
  */
 function trailFor(map: MapLibre, live: LiveVehicles, p: Placed, nextStops: StopTime[]): FeatureCollection {
-  const shape = live.shape(p.vehicle.shapeId)
   const from = p.dist
   const next = from == null ? undefined : nextStops.find((s) => s.dist > from + 5)
-  if (!shape || from == null || !next) return EMPTY
+  const shape = live.shape(p.vehicle.shapeId)
+  if (!shape || !next) return EMPTY
+  const end = pointAt(shape, next.dist)
+  const features = trailDots(map, live, p, next.dist)
+  features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [end.lon, end.lat] }, properties: { kind: 'target', color: `#${p.vehicle.color ?? '4F5B66'}` } })
+  return { type: 'FeatureCollection', features }
+}
+
+/** While watching, the ring is on the stop whether or not there's a bus, and the dots lead the first bus to it. */
+function watchTrail(map: MapLibre, live: LiveVehicles, stop: LonLat | null, color: string, first: Placed | undefined, firstDist: number | undefined): FeatureCollection {
+  const features = first && firstDist != null ? trailDots(map, live, first, firstDist) : []
+  if (stop) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] }, properties: { kind: 'target', color } })
+  return { type: 'FeatureCollection', features }
+}
+
+function trailDots(map: MapLibre, live: LiveVehicles, p: Placed, to: number): FeatureCollection['features'] {
+  const shape = live.shape(p.vehicle.shapeId)
+  const from = p.dist
+  if (!shape || from == null) return []
   const metresPerPx = (40075016 * Math.cos((p.lat * Math.PI) / 180)) / (512 * 2 ** map.getZoom())
   const step = TRAIL_SPACING_PX * metresPerPx
   const offset = REDUCED_MOTION.matches ? 0 : ((performance.now() / 1000) * TRAIL_SPEED_PX * metresPerPx) % step
   const color = `#${p.vehicle.color ?? '4F5B66'}`
   const features: FeatureCollection['features'] = []
   // Clear of the bus arrow at one end and the ring at the other; capped for a stop far away when zoomed out.
-  for (let d = from + step + offset; d < next.dist - step * 0.7 && features.length < 300; d += step) {
+  for (let d = from + step + offset; d < to - step * 0.7 && features.length < 300; d += step) {
     const q = pointAt(shape, d)
     features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [q.lon, q.lat] }, properties: { kind: 'dot', color } })
   }
-  const end = pointAt(shape, next.dist)
-  features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [end.lon, end.lat] }, properties: { kind: 'target', color } })
-  return { type: 'FeatureCollection', features }
+  return features
 }
 
 /** Vehicles are filled with their route's colour; the grey ones aren't on a trip. */
@@ -81,6 +199,9 @@ export function MapView({
   onSelect,
   follow,
   onFollowChange,
+  watching,
+  autoView,
+  onAutoViewChange,
   onMapInteract,
   centreRef,
 }: {
@@ -91,6 +212,9 @@ export function MapView({
   follow: boolean
   onFollowChange: (follow: boolean) => void
   watching: WatchView | null
+  /** While watching, the camera frames the stop and buses by itself. */
+  autoView: boolean
+  onAutoViewChange: (auto: boolean) => void
   /** The map was tapped or dragged. */
   onMapInteract: () => void
   /** Set to read the map's current middle. */
@@ -105,6 +229,21 @@ export function MapView({
   followRef.current = follow
   const onFollowChangeRef = useRef(onFollowChange)
   onFollowChangeRef.current = onFollowChange
+  const watchingRef = useRef(watching)
+  watchingRef.current = watching
+  const autoViewRef = useRef(autoView)
+  autoViewRef.current = autoView
+  const onAutoViewChangeRef = useRef(onAutoViewChange)
+  onAutoViewChangeRef.current = onAutoViewChange
+  // The watched route: the first bus's own shape when there is one, since a branch may differ from the usual pattern.
+  const watchShapeId = watching ? (watching.plan?.first?.shapeId ?? watching.line?.shapeId ?? null) : null
+  const watchShape = useQuery({
+    queryKey: ['shape', watchShapeId ?? ''],
+    queryFn: () => api.shape(watchShapeId!),
+    enabled: watchShapeId != null,
+    staleTime: 3_600_000,
+  })
+  const watchColor = watching?.line?.route.color ?? null
   // The selected bus's upcoming stops, shared with its panel's query, for the breadcrumbs to the next one.
   const vehicleId = selection?.kind === 'vehicle' ? selection.id : null
   const detail = useQuery({
@@ -139,6 +278,7 @@ export function MapView({
       map.addSource('stops', { type: 'geojson', data: EMPTY })
       map.addSource('vehicles', { type: 'geojson', data: EMPTY })
       map.addSource('trail', { type: 'geojson', data: EMPTY })
+      map.addSource('watch-stop', { type: 'geojson', data: EMPTY })
 
       map.addLayer({
         id: 'route-casing',
@@ -200,6 +340,14 @@ export function MapView({
           'text-halo-width': 1.5,
         },
       })
+      // The watched stop stays on the map at any zoom, unlike the rest, since the camera may pull back past them.
+      map.addLayer({
+        id: 'watch-stop',
+        type: 'symbol',
+        source: 'watch-stop',
+        layout: { 'icon-image': STOP_ICON, 'icon-size': 1, 'icon-allow-overlap': true, 'icon-ignore-placement': true },
+        paint: { 'icon-color': ['get', 'color'], 'icon-halo-color': '#F2A900', 'icon-halo-width': 3 },
+      })
       // Vehicles with no direction (not on a trip, or shape still loading) stay small dots.
       map.addLayer({
         id: 'vehicle-idle',
@@ -255,7 +403,7 @@ export function MapView({
 
       map.moveLayer('trail-target', 'vehicle-idle')
 
-      for (const layer of ['vehicle-arrow', 'vehicle-idle', 'stops']) {
+      for (const layer of ['vehicle-arrow', 'vehicle-idle', 'stops', 'watch-stop']) {
         map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'))
         map.on('mouseleave', layer, () => (map.getCanvas().style.cursor = ''))
       }
@@ -265,11 +413,13 @@ export function MapView({
       }
       map.on('click', 'vehicle-arrow', pickVehicle)
       map.on('click', 'vehicle-idle', pickVehicle)
-      map.on('click', 'stops', (e: MapLayerMouseEvent) => {
+      const pickStop = (e: MapLayerMouseEvent) => {
         if (map.queryRenderedFeatures(e.point, { layers: ['vehicle-arrow', 'vehicle-idle'] }).length > 0) return
         const id = e.features?.[0]?.properties?.id
         if (id) onSelect({ kind: 'stop', id: String(id) })
-      })
+      }
+      map.on('click', 'stops', pickStop)
+      map.on('click', 'watch-stop', pickStop)
 
       // Fetch a margin around the view, and only again once the view leaves it: following a bus moves the
       // map ten times a second.
@@ -308,6 +458,15 @@ export function MapView({
 
     // Dragging the map means the user wants to look elsewhere; stop following.
     map.on('dragstart', () => followRef.current && onFollowChangeRef.current(false))
+    // While watching, any drag or zoom the automatic camera didn't start is the rider taking over: wheel, pinch,
+    // the zoom buttons, the locate button. Wheel zooms don't carry an originalEvent, so that can't be the test.
+    let cameraMoving = false
+    const takeCamera = () => {
+      if (!cameraMoving && watchingRef.current && autoViewRef.current) onAutoViewChangeRef.current(false)
+    }
+    map.on('dragstart', takeCamera)
+    map.on('zoomstart', takeCamera)
+    map.on('moveend', () => (cameraMoving = false))
     // Moving the camera cancels a press that hasn't turned into a drag yet, so hold still while one is down.
     let pressed = false
     const press = () => (pressed = true)
@@ -316,12 +475,55 @@ export function MapView({
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
 
+    const pickBus = (id: string) => onSelect({ kind: 'vehicle', id })
+    const firstBubble = new Bubble(map, false, pickBus)
+    const secondBubble = new Bubble(map, true, pickBus)
+    let watchedStopKey = ''
+    let lastFitKey = ''
+    let lastFitAt = 0
+
     // Place every bus at playback time ~10 times a second.
     const timer = setInterval(() => {
       const source = map.getSource('vehicles') as GeoJSONSource | undefined
       if (!source) return
       const selected = selectionRef.current?.kind === 'vehicle' ? selectionRef.current.id : null
-      const placed = live.place()
+      const watch = watchingRef.current
+      const plan = watch?.plan
+      const everyone = live.place()
+      const firstPlaced = plan?.first ? everyone.find((p) => p.vehicle.id === plan.first!.vehicleId) : undefined
+      const secondPlaced = plan?.second ? everyone.find((p) => p.vehicle.id === plan.second!.vehicleId) : undefined
+      const placed = watch ? [firstPlaced, secondPlaced].filter((p) => p != null) : everyone
+
+      // The stops layer is everyone's stops; while watching, only this one shows.
+      const stop = watch?.stop ?? null
+      const color = `#${watch?.line?.route.color ?? firstPlaced?.vehicle.color ?? '4F5B66'}`
+      const stopKey = watch ? `${stop?.id}|${color}` : ''
+      if (stopKey !== watchedStopKey) {
+        watchedStopKey = stopKey
+        map.setLayoutProperty('stops', 'visibility', watch ? 'none' : 'visible')
+        ;(map.getSource('watch-stop') as GeoJSONSource).setData(
+          stop
+            ? { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] }, properties: { id: stop.id, color } }] }
+            : EMPTY,
+        )
+      }
+
+      const nowS = Date.now() / 1000
+      firstBubble.update(plan?.first, firstPlaced, nowS, watch?.dataAge != null)
+      secondBubble.update(plan?.second, secondPlaced, nowS, watch?.dataAge != null)
+
+      if (watch && stop && autoViewRef.current && !pressed && !map.isMoving()) {
+        const fitKey = `${stop.id}|${plan?.first?.vehicleId}|${plan?.second?.vehicleId}`
+        const now = performance.now()
+        if (fitKey !== lastFitKey || now - lastFitAt > WATCH_FIT_MS) {
+          lastFitKey = fitKey
+          lastFitAt = now
+          frameWatch(map, stop, firstPlaced, secondPlaced, () => (cameraMoving = true))
+        }
+      } else if (!autoViewRef.current || !watch) {
+        lastFitKey = '' // Frame straight away when the automatic view comes back.
+      }
+
       source.setData({
         type: 'FeatureCollection',
         features: placed.map((p) => ({
@@ -333,20 +535,24 @@ export function MapView({
             color: `#${p.vehicle.color ?? '4F5B66'}`,
             textColor: `#${p.vehicle.textColor ?? 'FFFFFF'}`,
             onTrip: p.vehicle.dist != null,
-            selected: p.vehicle.id === selected,
+            selected: p.vehicle.id === selected || p === firstPlaced,
             // Direction of travel along the route shape; absent for vehicles not on a trip.
             ...(p.bearing != null && p.vehicle.dist != null ? { bearing: Math.round(p.bearing) } : {}),
           },
         })),
       })
       const me = selected ? placed.find((p) => p.vehicle.id === selected) : undefined
-      ;(map.getSource('trail') as GeoJSONSource | undefined)?.setData(me ? trailFor(map, live, me, nextStopsRef.current) : EMPTY)
+      ;(map.getSource('trail') as GeoJSONSource | undefined)?.setData(
+        watch ? watchTrail(map, live, stop, color, firstPlaced, plan?.first?.dist) : me ? trailFor(map, live, me, nextStopsRef.current) : EMPTY,
+      )
       const followed = followRef.current ? me : undefined
       if (followed && !pressed) keepCentred(map, followed)
     }, FRAME_MS)
 
     return () => {
       clearInterval(timer)
+      firstBubble.hide()
+      secondBubble.hide()
       window.removeEventListener('pointerup', release)
       window.removeEventListener('pointercancel', release)
       map.remove()
@@ -362,7 +568,7 @@ export function MapView({
       const route = map.getSource('route') as GeoJSONSource | undefined
       if (!route) return
       const vehicle = selection?.kind === 'vehicle' ? live.vehicle(selection.id) : null
-      const shape = vehicle ? live.shape(vehicle.shapeId) : null
+      const shape = selection?.kind === 'watch' ? (watchShape.data ?? null) : vehicle ? live.shape(vehicle.shapeId) : null
       // Opened from a link, the vehicle or its shape may not have arrived yet; draw the route once they have.
       if (selection?.kind === 'vehicle' && !shape) retry = setTimeout(apply, 500)
       route.setData(
@@ -370,7 +576,7 @@ export function MapView({
           ? {
               type: 'Feature',
               geometry: { type: 'LineString', coordinates: shape.lon.map((lon, i) => [lon, shape.lat[i]]) },
-              properties: { color: `#${vehicle?.color ?? '4F5B66'}` },
+              properties: { color: `#${watchColor ?? vehicle?.color ?? '4F5B66'}` },
             }
           : EMPTY,
       )
@@ -382,7 +588,7 @@ export function MapView({
       clearTimeout(retry)
       map.off('load', apply)
     }
-  }, [selection, live])
+  }, [selection, live, watchShape.data, watchColor])
 
   // While following, zooming keeps the bus in the middle instead of zooming toward the pointer.
   useEffect(() => {

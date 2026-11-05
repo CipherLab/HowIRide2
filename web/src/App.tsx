@@ -120,7 +120,7 @@ export default function App() {
   return (
     <div className="app">
       <MapBoundary>
-        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} watching={watching} onMapInteract={closeList} centreRef={mapCentre} />
+        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} watching={watching} autoView={autoView} onAutoViewChange={setAutoView} onMapInteract={closeList} centreRef={mapCentre} />
       </MapBoundary>
       {view === 'map' && (
         <SearchBox
