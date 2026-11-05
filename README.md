@@ -1,6 +1,6 @@
 # HowIRide2
 
-Segment-based arrival predictions for Metro Transit (Minneapolis–St. Paul), learned from live GPS and recorded history rather than the timetable.
+Segment-based arrival predictions for Metro Transit (Minneapolis–St. Paul), learned from live GPS and recorded history rather than taken from the timetable.
 
 It records the agency's realtime feeds, works out when each vehicle actually passed each point on its route, predicts departures from that history, and scores every prediction against what the bus then did.
 Riders get a live map, per-stop departures, and a "be there by" time with a measured risk of missing the bus.
@@ -9,6 +9,9 @@ The code calls itself `transit-eta`: that's the solution, the `Transit` library,
 
 <!-- TOC -->
 - [How it works](#how-it-works)
+- [Results so far](#results-so-far)
+  - [How it gets better](#how-it-gets-better)
+- [Next: machine learning](#next-machine-learning)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -18,11 +21,11 @@ The code calls itself `transit-eta`: that's the solution, the `Transit` library,
 - [Ingest](#ingest)
 - [Crossings](#crossings)
 - [Prediction models](#prediction-models)
+  - [What the timetable does](#what-the-timetable-does)
   - [Trips that haven't started](#trips-that-havent-started)
   - [Be there by](#be-there-by)
 - [Backtest](#backtest)
   - [Scoring rules](#scoring-rules)
-  - [Results so far](#results-so-far)
   - [Nightly scoring](#nightly-scoring)
   - [What riders actually saw](#what-riders-actually-saw)
 - [Live map and API](#live-map-and-api)
@@ -64,6 +67,89 @@ Everything else is derived from that recording and can be rebuilt from it.
 | `detect-grid` | Off by default | Experiment: the same detection on a shared map grid. A week in, it scored worse than the default layout. |
 | `replay` | Local tool | Replays recorded hours into a CSV for inspection. |
 
+## Results so far
+
+Recording began in late October 2026, so these are early numbers: eight service days and 2.2 million scored bus departures, up to 4 November.
+
+On weekdays, the project now beats Metro Transit's own predictions on the typical miss from about 10 minutes ahead, by about 20 seconds at 30 minutes.
+It doesn't beat Metro Transit everywhere yet:
+
+- **Close in:** Metro Transit is better at 2 and 5 minutes ahead.
+- **Bad misses:** Metro Transit's 90th percentile is lower at every horizon.
+- **Leaving early:** the bus leaves more than 60 s before the shown time about three times as often with these predictions.
+- **Weekends:** Metro Transit won the typical miss on the only weekend scored so far.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/by-horizon-dark.svg">
+  <img src="docs/charts/by-horizon-light.svg" alt="Three line charts for buses on Wednesday 4 November, from 2 to 30 minutes ahead. Typical miss: this project and Metro Transit both rise, crossing near 10 minutes, ending at 113 and 133 seconds, with the timetable flat at 123. Bad miss: Metro Transit is lower throughout, ending at 342 against 360, with the timetable at 430. Bus left early: this project is about 17 to 19 percent beyond 10 minutes, the timetable 8 percent, and Metro Transit 5 to 7 percent. The table below has the values.">
+</picture>
+
+What riders were shown on Wednesday 4 November, buses only:
+
+| Minutes ahead | Median miss, s: this project / Metro Transit | 90th percentile, s: this project / Metro Transit | Left early: this project / Metro Transit |
+|---|---|---|---|
+| 2 | 31 / 25 | 91 / 69 | 13% / 3% |
+| 5 | 46 / 42 | 131 / 111 | 17% / 6% |
+| 10 | 66 / 68 | 189 / 171 | 19% / 7% |
+| 15 | 82 / 89 | 242 / 222 | 19% / 7% |
+| 20 | 95 / 107 | 288 / 268 | 18% / 6% |
+| 30 | 113 / 133 | 360 / 342 | 17% / 5% |
+
+The timetable, which doesn't change with how far ahead you look, scored a 123 s median, a 430 s 90th percentile and 8% early.
+Replayed by route that day, with 100 routes having enough data, this project had the lower median on 62 at 10 minutes and 71 at 30 minutes, but the lower early rate on only 3.
+
+Part of Metro Transit's advantage on leaving early comes from predicting too soon: at 30 minutes its prediction averaged 145 s before the actual departure, against 94 s here.
+That usually costs a rider a wait rather than a bus.
+The [be there by](#be-there-by) time is this project's answer: on a held-out weekday the bus was gone first for 2.7% of views, against 32.6% for the estimate alone.
+Its margins were fitted on weekdays only, so weekends are untested.
+
+### How it gets better
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/charts/by-day-dark.svg">
+  <img src="docs/charts/by-day-light.svg" alt="Two line charts of median miss for buses by service day, 28 October to 4 November. At 10 minutes ahead this project falls steadily from 74 to 64 seconds while Metro Transit stays between 62 and 72, and the timetable sits near 125. At 30 minutes ahead this project falls from 140 to 113 seconds, Metro Transit stays between 124 and 142 on weekdays but drops to about 105 on the weekend, and the timetable falls from 136 to 123. The table below has the values.">
+</picture>
+
+Each day replayed with only the days before it, buses at 30 minutes ahead:
+
+| Service day | Median miss, s: this project / Metro Transit | 90th percentile, s: this project / Metro Transit | Left early: this project / Metro Transit |
+|---|---|---|---|
+| Wed Oct 28 | 140 / 141 | 433 / 355 | 18% / 5% |
+| Thu Oct 29 | 133 / 142 | 410 / 362 | 19% / 5% |
+| Fri Oct 30 | 129 / 142 | 410 / 368 | 22% / 6% |
+| Sat Oct 31 | 127 / 108 | 397 / 321 | 16% / 16% |
+| Sun Nov 1 | 123 / 103 | 386 / 301 | 19% / 18% |
+| Mon Nov 2 | 111 / 124 | 353 / 322 | 24% / 7% |
+| Tue Nov 3 | 115 / 137 | 366 / 353 | 19% / 6% |
+| Wed Nov 4 | 113 / 133 | 364 / 342 | 18% / 5% |
+
+Against Metro Transit as a control for how hard each day was, the weekday median went from level to about 20 s ahead, and the gap in the 90th percentile narrowed from 78 s to 22 s.
+Three things help:
+
+- **More history, up to a point.** The tables fill in as days are recorded, and a cell is trusted once it has 3 samples. Much of the first week's gain arrived in that one step rather than as steady learning, and the tables only look back 14 days, so more recording alone will level off.
+- **Scoring shows what to fix.** Every prediction is checked against what the bus did, and rules like the [ones for trips that haven't started](#trips-that-havent-started) came from that. The code changed during these days, so this table isn't a pure measure of learning.
+- **Each day teaches the live model.** It rebuilds its tables hourly, including today so far, and its pace reading updates every minute.
+
+The early rate hasn't improved: it was 18% on the first day and on the last.
+Much of the median's gain came from no longer predicting departures so far ahead of when buses actually leave, which also sends more buses off before the time shown.
+Eight days is too few to call any of this a trend, so compare fixed test days and hours, use Metro Transit as the control, and report the early rate and 90th percentile alongside the median.
+
+## Next: machine learning
+
+The models so far are hand-built: medians plus rules.
+What's left in their errors is likely to take combinations those rules can't express, like a late bus running close behind another on a route that's behind all afternoon.
+
+So the next step is a trained model that corrects v1 rather than replacing it.
+An experiment is under way with gradient-boosted trees (LightGBM), trained on earlier service days and tested on later ones:
+
+- **It learns v1's remaining error,** from what's known when a prediction is made: the lead shown, stops and distance left, the delay so far, today's pace, the gap to the bus ahead, the time and type of day, and the route.
+- **Predictions are sampled on a fixed clock,** as a rider would see them. Sampling at set times before the actual departure would let a model learn to round to those times and look better than any rider would find it.
+- **The bar is deliberately high:** at least 10% lower early rate and 90th percentile than v1, with no worse a median, on every held-out day, and better than simple baselines. Those are the two measures where Metro Transit still leads.
+
+There are no results to report yet, and it may not clear that bar.
+More data is what gives it a chance: the archive so far covers one season, one weekend and no major holidays, and a trained model can keep learning from older days where v1's tables stop at 14.
+Because the raw feeds are kept, every day recorded now can be replayed as training data later.
+
 ## Repository layout
 
 | Path | Contents |
@@ -78,6 +164,7 @@ Everything else is derived from that recording and can be rebuilt from it.
 | [`tests`](tests) | xUnit suites for `Ingest` and `Transit` |
 | [`deploy`](deploy) | systemd unit and timer for the nightly backtest |
 | [`proto`](proto) | The upstream GTFS-realtime schema, under its own Apache 2.0 license |
+| [`docs/charts`](docs/charts) | The README's charts, their data snapshot and the script that draws them |
 | [`docs/superpowers`](docs/superpowers) | Design notes and plans for individual features |
 
 `data/` and `derived/` are created at run time and are not in the repository.
@@ -236,6 +323,16 @@ They start at the bus's last known departure and add, for each segment still ahe
 The live API serves v1, relearning its tables hourly from the last 14 days of crossings.
 A crossing counts only from when an app could first have known it, one ping interval plus the feed's lag after it happened, so a backtest can't see the future.
 
+### What the timetable does
+
+Once a bus is under way, the timetable plays no part in its prediction.
+The walk starts from where the bus was last seen and uses only recorded travel and dwell times, so a bus running 10 minutes late is predicted from where it actually is.
+
+The timetable still matters in two places:
+
+- **Trips that haven't started:** with no bus to follow, the estimate starts from the scheduled first departure plus [the delay learned for it](#trips-that-havent-started).
+- **The plan itself:** static GTFS supplies which trips exist, their stops and shapes, and which trips a bus works in sequence.
+
 ### Trips that haven't started
 
 Most of the error on a trip that hasn't started is the guess of when it will, so that's learned rather than read off the timetable:
@@ -262,6 +359,7 @@ The API reloads it hourly and offers no time until it exists.
 ## Backtest
 
 Scores predictors against observed departures (the moment a bus leaves a stop's zone), by how far ahead they were predicting: 2, 5, 10, 15, 20 and 30 minutes.
+The latest numbers are in [Results so far](#results-so-far).
 
 ```sh
 dotnet run --project src/Backtest -c Release -- --data <data-dir> --db <crossings.db> --test 20261027
@@ -286,33 +384,6 @@ dotnet run --project src/Backtest -c Release -- --data <data-dir> --db <crossing
 - **Only the latest snapshot counts.** At each horizon a predictor's answer is what the newest TripUpdates snapshot said; if the trip had dropped out of it, there is no prediction. A latest snapshot more than 60 s old is treated as an archive gap.
 - **Contenders:** the printed `schedule`, `metro-tripupdates`, `v0-medians`, `v1-pace`, and `live-v1` with `--live-log`. New models implement `IPredictor` and are scored the same way.
 - **Metrics:** coverage, median and p90 absolute error, bias (mean of predicted minus actual), share within ±1 and ±2 minutes, and the *early* rate: the bus left more than 60 s before the predicted time.
-
-### Results so far
-
-These are early numbers from about a week of history, as of 2026-11-05.
-
-Median absolute error on the first full live days, buses:
-
-| Ahead | v1, live | v1, replay | Metro Transit |
-|---|---|---|---|
-| 10 min | 66-67 s | 64-65 s | 68-69 s |
-| 30 min | ~114 s | ~114 s | 133-137 s |
-
-Better medians are not the whole story, because v1 is more likely to send the bus off before the time it shows.
-In a replay of Monday 2 November, by the lead time shown to the rider:
-
-| Shown | v1 early rate | Metro Transit early rate |
-|---|---|---|
-| ~10 min | 12% | 5% |
-| ~15 min | 18% | 6% |
-| ~30 min | 25% | 7% |
-
-The "be there by" time is the answer to that: on a held-out weekday the bus was gone first for 2.7% of views, against 32.6% for the estimate alone.
-Its margins were fitted on weekdays only, so weekends are untested.
-
-Be careful reading a trend into these.
-Much of the first week's gain arrived in a single step, when weekday cells reached their 3 samples, rather than from steady learning.
-To compare fairly, hold the test day and hours fixed, use Metro Transit as the control for how hard the day was, and report the early rate and p90 alongside the median.
 
 ### Nightly scoring
 
@@ -379,6 +450,8 @@ Vite proxies `/api` to port 5199; set `API_URL` to point it elsewhere.
 | `npm test` in `web/` | The rules for what the screen shows |
 | `npm run lint` in `web/` | oxlint |
 | `npm run build` in `web/` | Type-checks and builds into `src/Api/wwwroot` |
+
+To update the README's charts, replace [`docs/charts/scores.csv`](docs/charts/scores.csv) and run [`docs/charts/make_charts.py`](docs/charts/make_charts.py), which needs matplotlib.
 
 New predictors implement `IPredictor` in [`src/Transit/Backtest`](src/Transit/Backtest) and are added in [`src/Backtest/Program.cs`](src/Backtest/Program.cs).
 
