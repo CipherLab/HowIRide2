@@ -23,6 +23,8 @@ api.MapGet("/health", (LiveState s) => s.Health());
 api.MapGet("/vehicles", (LiveState s) => s.Snapshot());
 api.MapGet("/vehicles/{id}", (string id, LiveState s) => s.Vehicle(id) is { } v ? Results.Ok(v) : Results.NotFound());
 api.MapGet("/routes", (LiveState s) => s.Routes());
+api.MapGet("/routes/{id}/directions", (string id, LiveState s) =>
+    s.Directions(id) is { } directions ? Results.Ok(directions) : Results.NotFound());
 api.MapGet("/shapes/{id}", (string id, LiveState s, HttpContext ctx) =>
 {
     if (s.Shape(id) is not { } shape) return Results.NotFound();
@@ -35,6 +37,8 @@ api.MapGet("/stops", (string bbox, LiveState s) =>
     var b = bbox.Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray();
     return b.Length == 4 ? Results.Ok(s.StopsIn(b[0], b[1], b[2], b[3])) : Results.BadRequest("bbox=south,west,north,east");
 });
+api.MapGet("/stops/search", (string? q, LiveState s) => s.SearchStops(q ?? ""));
+api.MapGet("/stops/{id}/lines", (string id, LiveState s) => s.Lines(id));
 api.MapGet("/stops/{id}", (string id, string? route, int? direction, LiveState s) =>
     s.Stop(id) is { } stop ? Results.Ok(new { stop, departures = s.Departures(id, routeId: route, directionId: direction) }) : Results.NotFound());
 

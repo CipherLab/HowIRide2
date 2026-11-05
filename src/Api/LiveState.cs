@@ -7,6 +7,7 @@ using Transit.Eta;
 using Transit.Gtfs;
 using Transit.Realtime;
 using TransitRealtime;
+using RouteDirection = Transit.Gtfs.RouteDirection;
 
 namespace Api;
 
@@ -44,6 +45,10 @@ public sealed record StopTime(string StopId, string Name, int Sequence, double D
 
 public sealed record VehicleDetail(VehicleView Vehicle, StopTime[] NextStops);
 
+public sealed record DirectionView(int DirectionId, string Label, StopView[] Stops);
+
+public sealed record StopLineView(RouteInfo Route, int DirectionId, string Label, string ShapeId);
+
 public sealed record Departure(
     string TripId, string RouteId, string Route, string Color, string TextColor, string Headsign, string? VehicleId,
     double? Scheduled, double? Metro, double? V0, double? V1, double? BeBy, int DirectionId, double Dist, string ShapeId);
@@ -72,6 +77,8 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     Dictionary<(string Date, string Trip), Dictionary<int, long>> _metro = [];
     Dictionary<string, (Pattern Pattern, int Checkpoint)[]> _stopPatterns = [];
     Dictionary<string, RouteInfo[]> _stopRoutes = [];
+    IReadOnlyDictionary<string, RouteDirection[]> _routeDirections = new Dictionary<string, RouteDirection[]>();
+    IReadOnlyDictionary<string, StopLine[]> _stopLines = new Dictionary<string, StopLine[]>();
     SegmentStats? _stats;
     RecentPace? _pace;
     BeByMargins? _margins;
@@ -115,6 +122,9 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             .ThenBy(r => int.TryParse(r.ShortName, out var n) ? n : int.MaxValue)
             .ThenBy(r => r.ShortName, StringComparer.Ordinal)
             .ToArray());
+
+        _routeDirections = RouteDirections.Build(_feeds.Feeds);
+        _stopLines = RouteDirections.LinesByStop(_feeds.Feeds);
     }
 
     /// <summary>Rail and the lettered/coloured rapid bus lines, which get their own colour on the map.</summary>
@@ -282,6 +292,31 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     public StopView? Stop(string id)
     {
         lock (_gate) return StopInfoOf(id) is { } s ? ViewOf(s) : null;
+    }
+
+    /// <summary>A route's directions and their stops, or null for a route we don't know.</summary>
+    public DirectionView[]? Directions(string routeId)
+    {
+        lock (_gate)
+            return _routeDirections.GetValueOrDefault(routeId)?
+                .Select(d => new DirectionView(d.DirectionId, d.Label, d.Stops.Select(ViewOf).ToArray()))
+                .ToArray();
+    }
+
+    /// <summary>Each route and direction a rider can catch at a stop.</summary>
+    public StopLineView[] Lines(string stopId)
+    {
+        lock (_gate)
+            return (_stopLines.GetValueOrDefault(stopId) ?? [])
+                .Select(l => RouteOf(l.RouteId) is { } route ? new StopLineView(route, l.DirectionId, l.Label, l.ShapeId) : null)
+                .OfType<StopLineView>()
+                .ToArray();
+    }
+
+    public StopView[] SearchStops(string query)
+    {
+        lock (_gate)
+            return StopSearch.Find(_stopPatterns.Keys.Select(StopInfoOf).OfType<StopInfo>(), query).Select(ViewOf).ToArray();
     }
 
     StopInfo? StopInfoOf(string id) =>

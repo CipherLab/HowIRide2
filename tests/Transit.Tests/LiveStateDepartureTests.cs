@@ -141,4 +141,25 @@ public sealed class LiveStateDepartureTests : IDisposable
         Assert.Equal("V1", departure.VehicleId);
         Assert.Equal(18 * 78.6, departure.Dist, 1);
     }
+
+    [Fact]
+    public void Directions_are_null_for_an_unknown_route()
+    {
+        Assert.Null(_state.Directions("NOPE"));
+        Assert.Equal(["East", "West"], _state.Directions("R")!.Select(d => d.Label));
+    }
+
+    [Fact]
+    public void Lines_carry_the_route_for_each_direction_at_a_stop()
+    {
+        var lines = _state.Lines("B");
+        Assert.Contains(lines, l => l.Route.Id == "R" && l.DirectionId == 1 && l.Label == "West" && l.ShapeId == "WEST");
+        Assert.Empty(_state.Lines("NOPE"));
+    }
+
+    [Fact]
+    public void Search_only_finds_stops_with_service()
+    {
+        Assert.Equal(["B"], _state.SearchStops("middle").Select(s => s.Id));
+    }
 }
