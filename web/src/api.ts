@@ -1,3 +1,5 @@
+import type { Watch } from './watch'
+
 // Shapes of the Api's JSON. Times are unix seconds.
 
 export interface Vehicle {
@@ -81,6 +83,25 @@ export interface Departure {
   v1: number | null
   /** When to be at the stop so that about 19 buses in 20 are still to come, though less on some routes. */
   beBy: number | null
+  directionId: number
+  /** Metres along the trip's shape to this stop, on the same scale as a vehicle's dist. */
+  dist: number
+  shapeId: string
+}
+
+export interface RouteDirection {
+  directionId: number
+  label: string
+  /** In route order. */
+  stops: Stop[]
+}
+
+/** A route and direction a rider can catch at a stop. */
+export interface StopLine {
+  route: Route
+  directionId: number
+  label: string
+  shapeId: string
 }
 
 export interface Score {
@@ -136,6 +157,11 @@ export const api = {
   stops: (south: number, west: number, north: number, east: number) =>
     get<Stop[]>(`/stops?bbox=${[south, west, north, east].map((v) => v.toFixed(5)).join(',')}`),
   stop: (id: string) => get<{ stop: Stop; departures: Departure[] }>(`/stops/${encodeURIComponent(id)}`),
+  watchStop: (w: Watch) =>
+    get<{ stop: Stop; departures: Departure[] }>(`/stops/${encodeURIComponent(w.stopId)}?route=${encodeURIComponent(w.routeId)}&direction=${w.directionId}`),
+  directions: (routeId: string) => get<RouteDirection[]>(`/routes/${encodeURIComponent(routeId)}/directions`),
+  lines: (stopId: string) => get<StopLine[]>(`/stops/${encodeURIComponent(stopId)}/lines`),
+  searchStops: (q: string) => get<Stop[]>(`/stops/search?q=${encodeURIComponent(q)}`),
   scores: () => get<{ runs: Score[] }>('/scores'),
   routeScores: () => get<{ runAt: string | null; rows: RouteScore[] }>('/scores/routes'),
   routes: () => get<Route[]>('/routes'),
