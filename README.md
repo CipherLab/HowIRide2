@@ -28,6 +28,7 @@ The code calls itself `transit-eta`: that's the solution, the `Transit` library,
 - [Live map and API](#live-map-and-api)
 - [Development](#development)
 - [Deployment notes](#deployment-notes)
+- [License](#license)
 <!-- /TOC -->
 
 ## How it works
@@ -76,7 +77,7 @@ Everything else is derived from that recording and can be rebuilt from it.
 | [`web`](web) | React, MapLibre and Vite front end |
 | [`tests`](tests) | xUnit suites for `Ingest` and `Transit` |
 | [`deploy`](deploy) | systemd unit and timer for the nightly backtest |
-| [`proto`](proto) | The upstream GTFS-realtime schema, under its own Apache 2.0 licence |
+| [`proto`](proto) | The upstream GTFS-realtime schema, under its own Apache 2.0 license |
 | [`docs/superpowers`](docs/superpowers) | Design notes and plans for individual features |
 
 `data/` and `derived/` are created at run time and are not in the repository.
@@ -390,3 +391,8 @@ The Dockerfiles build natively on arm64, or with `docker buildx build --platform
 - **Memory limits:** a Pi that boots with `cgroup_disable=memory` ignores Docker's memory limits, so the backtest's heap is capped by .NET itself (`DOTNET_GCHeapHardLimit`) and `oom_score_adj` makes it the first thing killed.
 - **Reading live databases:** copy `crossings.db` with the SQLite backup API rather than as a file, because it's in WAL mode.
 - **Exposure:** the API has no authentication and serves plain HTTP on port 8080, so keep it on a LAN or behind a reverse proxy. TLS isn't part of this repository.
+
+## License
+
+[MIT](LICENSE), except [`proto/gtfs-realtime.proto`](proto/gtfs-realtime.proto), which keeps its upstream Apache 2.0 license.
+The license covers this code only, not Metro Transit's feeds or anything recorded from them.
