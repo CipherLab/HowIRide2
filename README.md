@@ -157,9 +157,10 @@ It serves a React app (`web/`) built into its `wwwroot`.
 - **Live map:** every vehicle placed by distance along its real shape, replayed ~15 s behind the newest ping so it glides between GPS reports. Dot colour is today's pace on the road ahead; the ring is the route colour.
 - **Stop:** zoom in and tap a stop, or open `#stop/<id>`. Each departure shows our estimate (amber dot), Metro Transit's (ring) and the timetable (tick) on one minutes-ahead strip.
 - **Vehicle:** tap a bus or open `#vehicle/<id>` for its route line and next stops.
+- **Watching a stop:** the search box at the top right finds a stop by route, name or number, with your recent picks and nearby routes. It then shows that stop and the next two buses on one route and direction, each with its time riding on it, framed automatically until you drag or zoom. Open `#watch/<stop>/<route>/<direction>` directly to save one.
 - **Scorecard:** `#scorecard`, the latest backtest by horizon plus live matcher health.
 
-Endpoints: `/api/health`, `/api/vehicles`, `/api/vehicles/{id}`, `/api/stream` (server-sent events, one snapshot per feed update), `/api/shapes/{id}`, `/api/stops?bbox=s,w,n,e`, `/api/stops/{id}`, `/api/routes`, `/api/scores`.
+Endpoints: `/api/health`, `/api/vehicles`, `/api/vehicles/{id}`, `/api/stream` (server-sent events, one snapshot per feed update), `/api/shapes/{id}`, `/api/stops?bbox=s,w,n,e`, `/api/stops/{id}` (add `?route=<id>&direction=<n>` to filter), `/api/stops/{id}/lines`, `/api/stops/search?q=`, `/api/routes`, `/api/routes/{id}/directions`, `/api/scores`.
 
 Develop the UI with hot reload against a local API:
 
@@ -167,3 +168,5 @@ Develop the UI with hot reload against a local API:
 dotnet run --project src/Api -- --Api:DataDir=<data> --Api:DbPath=<crossings.db> --Urls=http://127.0.0.1:5199
 cd web && npm install && npm run dev
 ```
+
+`npm test` in `web/` runs the rules for what the screen shows; `dotnet test` covers the rest.
