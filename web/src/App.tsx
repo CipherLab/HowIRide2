@@ -6,6 +6,8 @@ import { LiveVehicles } from './live'
 import { MapView, type Selection } from './MapView'
 import { Charts } from './charts'
 import { LiveStatus, Overview, Scorecard, StopPanel, useLive, VehiclePanel } from './panels'
+import { useWatch } from './useWatch'
+import { parseHash, selectionHash, type Watch } from './watch'
 
 type View = 'map' | 'scores' | 'charts'
 
@@ -19,11 +21,6 @@ function loadCollapsed() {
   } catch {
     return false
   }
-}
-
-function fromHash(): Selection {
-  const [kind, id] = location.hash.slice(1).split('/')
-  return (kind === 'stop' || kind === 'vehicle') && id ? { kind, id: decodeURIComponent(id) } : null
 }
 
 /** Without WebGL the map throws as it starts. That shouldn't take the panel down with it, since most of the panel doesn't need a map. */
@@ -46,7 +43,7 @@ class MapBoundary extends Component<{ children: ReactNode }, { failed: boolean }
 
 export default function App() {
   const [live] = useState(() => new LiveVehicles())
-  const [selection, setSelection] = useState<Selection>(fromHash)
+  const [selection, setSelection] = useState<Selection>(() => parseHash(location.hash))
   const [view, setView] = useState<View>(
     () => (Object.entries(VIEW_HASH).find(([, h]) => h === location.hash)?.[0] as View | undefined) ?? 'map',
   )
@@ -61,9 +58,22 @@ export default function App() {
       // Private windows can refuse storage; the panel just opens expanded next time.
     }
   }, [collapsed])
+  // Watching folds the panel to give the map the screen, but that's not the rider's own choice to remember:
+  // it has its own state, so stopping brings back however they left the panel.
+  const [watchPanelOpen, setWatchPanelOpen] = useState(false)
+  const watch: Watch | null = selection?.kind === 'watch' ? selection : null
+  const watching = useWatch(watch, live)
+  const panelCollapsed = watch ? !watchPanelOpen : collapsed
+  const setPanelCollapsed = (c: boolean) => (watch ? setWatchPanelOpen(!c) : setCollapsed(c))
   const open = (v: View) => {
     setView(v)
-    setCollapsed(false)
+    // The other tabs leave the map behind, and watching with it. Live just reopens the panel.
+    if (v !== 'map' && watch) {
+      setSelection(null)
+      setCollapsed(false)
+    } else {
+      setPanelCollapsed(false)
+    }
   }
   const select = useCallback((s: Selection) => {
     setSelection(s)
@@ -73,9 +83,9 @@ export default function App() {
   }, [])
   const following = follow && selection?.kind === 'vehicle'
 
-  // The selection lives in the URL (#stop/123, #vehicle/456, #scorecard, #charts) so a view can be bookmarked or shared.
+  // The selection lives in the URL (#stop/123, #vehicle/456, #watch/123/21/0, #scorecard, #charts) so a view can be bookmarked or shared.
   useEffect(() => {
-    const hash = VIEW_HASH[view] ?? (selection ? `#${selection.kind}/${selection.id}` : '')
+    const hash = VIEW_HASH[view] ?? selectionHash(selection)
     if (location.hash !== hash) history.replaceState(null, '', hash || location.pathname)
   }, [selection, view])
 
@@ -95,11 +105,11 @@ export default function App() {
   return (
     <div className="app">
       <MapBoundary>
-        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} />
+        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} watching={watching} />
       </MapBoundary>
-      {collapsed ? (
+      {panelCollapsed ? (
         <nav className="rail" aria-label="Details panel, hidden">
-          <button className="rail-open" onClick={() => setCollapsed(false)} aria-label="Show panel" title="Show panel">
+          <button className="rail-open" onClick={() => setPanelCollapsed(false)} aria-label="Show panel" title="Show panel">
             <span aria-hidden="true">›</span>
           </button>
           <button className="rail-tab" aria-current={view === 'map' ? 'page' : undefined} onClick={() => open('map')}>
@@ -121,16 +131,16 @@ export default function App() {
             <div className="wordmark">
               <h1>TWIN CITIES ETA</h1>
               <nav className="nav">
-                <button aria-current={view === 'map' ? 'page' : undefined} onClick={() => setView('map')}>
+                <button aria-current={view === 'map' ? 'page' : undefined} onClick={() => open('map')}>
                   Live
                 </button>
-                <button aria-current={view === 'scores' ? 'page' : undefined} onClick={() => setView('scores')}>
+                <button aria-current={view === 'scores' ? 'page' : undefined} onClick={() => open('scores')}>
                   Scorecard
                 </button>
-                <button aria-current={view === 'charts' ? 'page' : undefined} onClick={() => setView('charts')}>
+                <button aria-current={view === 'charts' ? 'page' : undefined} onClick={() => open('charts')}>
                   Charts
                 </button>
-                <button className="collapse" onClick={() => setCollapsed(true)} aria-label="Hide panel" title="Hide panel">
+                <button className="collapse" onClick={() => setPanelCollapsed(true)} aria-label="Hide panel" title="Hide panel">
                   <span aria-hidden="true">‹</span>
                 </button>
               </nav>
@@ -151,6 +161,8 @@ export default function App() {
               <VehiclePanel id={selection.id} live={live} onSelect={select} />
             ) : selection?.kind === 'stop' ? (
               <StopPanel id={selection.id} onSelect={select} />
+            ) : watch ? (
+              <StopPanel id={watch.stopId} onSelect={select} />
             ) : (
               <Overview live={live} />
             )}
@@ -175,10 +187,11 @@ function Heading({
   onFollowChange: (follow: boolean) => void
 }) {
   useLive(live)
+  const stopId = selection?.kind === 'stop' ? selection.id : selection?.kind === 'watch' ? selection.stopId : null
   const stop = useQuery({
-    queryKey: ['stop', selection?.kind === 'stop' ? selection.id : ''],
-    queryFn: () => api.stop(selection!.id),
-    enabled: selection?.kind === 'stop',
+    queryKey: ['stop', stopId ?? ''],
+    queryFn: () => api.stop(stopId!),
+    enabled: stopId != null,
     refetchInterval: 15_000,
   })
   if (!selection) return <h2 className="title">Where every bus and train is, and when it will actually leave</h2>
@@ -187,12 +200,12 @@ function Heading({
       ← All vehicles
     </button>
   )
-  if (selection.kind === 'stop')
+  if (stopId != null)
     return (
       <>
         {back}
         <h2 className="title">{stop.data?.stop.name ?? 'Stop'}</h2>
-        <p className="subtitle">Stop #{selection.id}</p>
+        <p className="subtitle">Stop #{stopId}</p>
         {stop.data && stop.data.stop.routes.length > 0 && (
           <p className="served" aria-label="Routes serving this stop">
             {stop.data.stop.routes.map((r) => (
@@ -202,6 +215,7 @@ function Heading({
         )}
       </>
     )
+  if (selection.kind !== 'vehicle') return null
   const v = live.vehicle(selection.id)
   return (
     <>

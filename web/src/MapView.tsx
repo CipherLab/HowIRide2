@@ -5,12 +5,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { api, isRapid, type StopTime } from './api'
 import { pointAt, type LiveVehicles, type Placed } from './live'
+import type { WatchView } from './useWatch'
 import { ARROW_ICON, arrowIcon, STOP_ICON, stopIcon } from './vehicleIcon'
+import type { Selection } from './watch'
 
 // MapLibre 6 runs tile work in a separate worker file; bundlers must ship it and say where it is.
 setWorkerUrl(mapWorkerUrl)
 
-export type Selection = { kind: 'vehicle'; id: string } | { kind: 'stop'; id: string } | null
+export type { Selection } from './watch'
 
 const STOPS_MIN_ZOOM = 13
 const FRAME_MS = 100
@@ -86,6 +88,7 @@ export function MapView({
   /** Keep the selected vehicle centred as it moves. */
   follow: boolean
   onFollowChange: (follow: boolean) => void
+  watching: WatchView | null
 }) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibre | null>(null)
