@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { Component, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from './api'
 import { RouteBadge } from './components'
 import { LiveVehicles } from './live'
 import { MapView, type Selection } from './MapView'
 import { Charts } from './charts'
 import { LiveStatus, Overview, Scorecard, StopPanel, useLive, VehiclePanel } from './panels'
+import { loadRecents } from './recents'
+import { SearchBox } from './SearchBox'
 import { useWatch } from './useWatch'
 import { parseHash, selectionHash, type Watch } from './watch'
 
@@ -82,6 +84,19 @@ export default function App() {
     if (s?.kind === 'vehicle') setFollow(true)
   }, [])
   const following = follow && selection?.kind === 'vehicle'
+  // Whether the watching map is framing the stop and buses by itself; dragging the map turns this off.
+  const [autoView, setAutoView] = useState(true)
+  const startWatch = useCallback((w: Watch) => {
+    setSelection({ kind: 'watch', ...w })
+    setView('map')
+    setWatchPanelOpen(false)
+    setAutoView(true)
+  }, [])
+  // Recents are already showing on opening the app, so a regular stop is one tap away.
+  const [listOpen, setListOpen] = useState(() => parseHash(location.hash)?.kind !== 'watch' && loadRecents().length > 0)
+  const closeList = useCallback(() => setListOpen(false), [])
+  // Filled in by the map once it starts; without one, the map's starting view stands in.
+  const mapCentre = useRef(() => ({ lat: 44.965, lon: -93.235 }))
 
   // The selection lives in the URL (#stop/123, #vehicle/456, #watch/123/21/0, #scorecard, #charts) so a view can be bookmarked or shared.
   useEffect(() => {
@@ -105,8 +120,20 @@ export default function App() {
   return (
     <div className="app">
       <MapBoundary>
-        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} watching={watching} />
+        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} watching={watching} onMapInteract={closeList} centreRef={mapCentre} />
       </MapBoundary>
+      {view === 'map' && (
+        <SearchBox
+          watching={watching}
+          onWatch={startWatch}
+          onStop={() => setSelection(null)}
+          autoView={autoView}
+          onAutoView={() => setAutoView(true)}
+          listOpen={listOpen}
+          onListOpen={setListOpen}
+          mapCentre={() => mapCentre.current()}
+        />
+      )}
       {panelCollapsed ? (
         <nav className="rail" aria-label="Details panel, hidden">
           <button className="rail-open" onClick={() => setPanelCollapsed(false)} aria-label="Show panel" title="Show panel">

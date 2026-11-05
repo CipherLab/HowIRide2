@@ -2,7 +2,7 @@ import { GeolocateControl, LngLatBounds, Map as MapLibre, NavigationControl, set
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { FeatureCollection } from 'geojson'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { api, isRapid, type StopTime } from './api'
 import { pointAt, type LiveVehicles, type Placed } from './live'
 import type { WatchView } from './useWatch'
@@ -81,6 +81,8 @@ export function MapView({
   onSelect,
   follow,
   onFollowChange,
+  onMapInteract,
+  centreRef,
 }: {
   live: LiveVehicles
   selection: Selection
@@ -89,6 +91,10 @@ export function MapView({
   follow: boolean
   onFollowChange: (follow: boolean) => void
   watching: WatchView | null
+  /** The map was tapped or dragged. */
+  onMapInteract: () => void
+  /** Set to read the map's current middle. */
+  centreRef: RefObject<() => { lat: number; lon: number }>
 }) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibre | null>(null)
@@ -119,6 +125,12 @@ export function MapView({
       attributionControl: { customAttribution: 'Transit data: Metro Transit' },
     })
     mapRef.current = map
+    centreRef.current = () => {
+      const c = map.getCenter()
+      return { lat: c.lat, lon: c.lng }
+    }
+    map.on('click', () => onMapInteract())
+    map.on('dragstart', () => onMapInteract())
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     map.addControl(new GeolocateControl({ trackUserLocation: false }), 'top-right')
 
@@ -339,7 +351,7 @@ export function MapView({
       window.removeEventListener('pointercancel', release)
       map.remove()
     }
-  }, [live, onSelect])
+  }, [live, onSelect, onMapInteract, centreRef])
 
   // Draw the selected vehicle's route, and re-mark the selected stop.
   useEffect(() => {
