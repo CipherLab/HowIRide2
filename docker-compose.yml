@@ -39,7 +39,7 @@ services:
       context: .
       args: { PROJECT: Backtest }
     profiles: [tools]
-    command: ["--data", "/data", "--db", "/derived/crossings.db", "--yesterday", "--live-log", "/derived/live-predictions"]
+    command: ["--data", "/data", "--db", "/derived/crossings.db", "--yesterday", "--live-log", "/derived/live-predictions", "--fit-margins", "/derived/be-by-margins.json"]
     environment:
       DOTNET_GCHeapHardLimit: "0xC0000000"
     cpus: 2.0
@@ -52,7 +52,9 @@ services:
 
   # Experiment: the same detection with checkpoints on a shared map grid (see CheckpointBuilder.Mode), into its own
   # database, so both layouts are scored on the same days. Score it with TRANSIT_CHECKPOINTS=grid and --db crossings-grid.db.
+  # Off by default: a week in, it scored worse than the spaced layout. Start it with --profile experiments.
   detect-grid:
+    profiles: [experiments]
     build:
       context: .
       args: { PROJECT: Detect }
@@ -79,6 +81,7 @@ services:
       Api__DbPath: /derived/crossings.db
       Api__BacktestDbPath: /derived/backtest.db
       Api__PredictionLogDir: /derived/live-predictions
+      Api__BeByMarginsPath: /derived/be-by-margins.json
     volumes:
       - ./data:/data:ro
       # Read-write because SQLite needs its -shm file to read a WAL database, and for the live prediction log.

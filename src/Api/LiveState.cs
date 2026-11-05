@@ -27,6 +27,9 @@ public sealed class ApiOptions
 
     /// <summary>Where a sample of the live predictions is archived each minute, so they can be scored later.</summary>
     public string PredictionLogDir { get; set; } = "derived/live-predictions";
+
+    /// <summary>The nightly backtest's learned "be there by" margins; without them the app doesn't offer the time.</summary>
+    public string BeByMarginsPath { get; set; } = "derived/be-by-margins.json";
 }
 
 public sealed record VehicleView(
@@ -37,13 +40,13 @@ public sealed record VehicleView(
 public sealed record StopView(string Id, string Name, double Lat, double Lon, RouteInfo[] Routes);
 
 /// <param name="Dist">Metres along the trip's shape, on the same scale as a vehicle's dist.</param>
-public sealed record StopTime(string StopId, string Name, int Sequence, double Dist, double? Scheduled, double? Metro, double? V0, double? V1);
+public sealed record StopTime(string StopId, string Name, int Sequence, double Dist, double? Scheduled, double? Metro, double? V0, double? V1, double? BeBy);
 
 public sealed record VehicleDetail(VehicleView Vehicle, StopTime[] NextStops);
 
 public sealed record Departure(
     string TripId, string RouteId, string Route, string Color, string TextColor, string Headsign, string? VehicleId,
-    double? Scheduled, double? Metro, double? V0, double? V1);
+    double? Scheduled, double? Metro, double? V0, double? V1, double? BeBy);
 
 /// <summary>
 /// Everything the live API serves, fed by the archive followers. One lock guards it all: updates arrive about
@@ -71,6 +74,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     Dictionary<string, RouteInfo[]> _stopRoutes = [];
     SegmentStats? _stats;
     RecentPace? _pace;
+    BeByMargins? _margins;
     DateTimeOffset _paceBuiltAt;
     DateTimeOffset? _vehiclesFetchedAt, _metroFetchedAt, _statsBuiltAt;
     DateTime? _detectorHour;
@@ -184,6 +188,11 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             _statsBuiltAt = clock.GetUtcNow();
             RebuildPace(clock.GetUtcNow());
         }
+    }
+
+    public void SetMargins(BeByMargins? margins)
+    {
+        lock (_gate) _margins = margins;
     }
 
     void RebuildPace(DateTimeOffset at)
@@ -319,7 +328,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
                 if (best is null || best < now - 60 || best > now + 90 * 60) continue;
                 var route = RouteOf(trip.RouteId);
                 result.Add((best.Value, new Departure(tripId, trip.RouteId, route?.ShortName ?? trip.RouteId, route?.Color ?? "4F5B66",
-                    route?.TextColor ?? "FFFFFF", trip.Headsign, vehicle?.Id, st.Scheduled, st.Metro, st.V0, st.V1)));
+                    route?.TextColor ?? "FFFFFF", trip.Headsign, vehicle?.Id, st.Scheduled, st.Metro, st.V0, st.V1, st.BeBy)));
             }
             return result.OrderBy(r => r.Sort).Take(limit).Select(r => r.D).ToArray();
         }
@@ -359,7 +368,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             ? origin + trip.ScheduledDepartures[pos] : null;
         double? metro = _metro.TryGetValue((serviceDate, trip.TripId), out var m) && m.TryGetValue(cp.StopSequence, out var t) ? t : null;
 
-        double? v0 = null, v1 = null;
+        double? v0 = null, v1 = null, beBy = null;
         if (_stats is not null)
         {
             var rows = _recent.GetValueOrDefault((serviceDate, trip.TripId)) ?? [];
@@ -373,9 +382,11 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
             if (_pace is not null)
                 v1 = new SegmentEtaPredictor("v1", _stats, _pace, empty, Resolve, Zone) { UseBlocks = true }
                     .Predict(trip, cp.Index, rows, dayType, origin, now, RowsOf);
+            if (v1 is { } predicted && _margins is { } margins)
+                beBy = margins.BeBy(trip.RouteId, rows.Any(r => r.DepartKnownAt <= now), predicted, now);
         }
         var name = StopInfoOf(cp.Id)?.Name ?? cp.Id;
-        return new StopTime(cp.Id, name, cp.StopSequence, Math.Round(cp.Dist, 1), scheduled, metro, Round(v0), Round(v1));
+        return new StopTime(cp.Id, name, cp.StopSequence, Math.Round(cp.Dist, 1), scheduled, metro, Round(v0), Round(v1), Round(beBy));
 
         static double? Round(double? v) => v is { } x ? Math.Round(x) : null;
     }

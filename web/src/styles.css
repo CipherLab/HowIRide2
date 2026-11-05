@@ -54,6 +54,20 @@ button {
   inset: 0;
 }
 
+/* Top right: the panel docks left on wide screens and along the bottom on phones. */
+.map-failed {
+  display: grid;
+  align-items: start;
+  justify-items: end;
+  padding: 24px;
+  color: var(--ink);
+  text-align: right;
+}
+
+.map-failed p {
+  max-width: 32ch;
+}
+
 .map {
   position: absolute;
   inset: 0;
@@ -460,6 +474,13 @@ button.row:hover {
 }
 
 .times .t.ours {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.be-by {
+  display: block;
+  margin-top: 2px;
   color: var(--ink);
   font-weight: 700;
 }

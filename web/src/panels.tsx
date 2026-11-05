@@ -9,6 +9,7 @@ import {
   Timeline,
   TimelineLegend,
   Times,
+  BeBy,
   useNow,
 } from './components'
 import type { LiveVehicles } from './live'
@@ -174,6 +175,9 @@ export function StopPanel({ id, onSelect }: { id: string; onSelect: (s: Selectio
       <div className="section">
         <h2>Departing</h2>
         {departures.length > 0 ? <TimelineLegend span={span} /> : <p className="hint">Nothing due here in the next 90 minutes.</p>}
+        {departures.some((d) => d.beBy != null) && (
+          <p className="hint">Be there by that time and about 19 buses in 20 will still be here, though some routes are less predictable. The estimate itself is a best guess.</p>
+        )}
       </div>
       <ul className="rows">
         {departures.map((d) => {
@@ -187,6 +191,7 @@ export function StopPanel({ id, onSelect }: { id: string; onSelect: (s: Selectio
                   <strong>{d.headsign}</strong>
                   <small>
                     <Times ours={d.v1 ?? d.v0} metro={d.metro} scheduled={d.scheduled} />
+                    {d.beBy != null && <BeBy at={d.beBy} now={now} />}
                   </small>
                 </span>
                 <span className="when">

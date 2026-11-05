@@ -78,6 +78,11 @@ function shortClock(t: number) {
 }
 
 /** Our estimate, Metro Transit's and the timetable's, each behind its timeline mark, then how ours compares to the timetable. */
+/** The safe time beside our best guess: a prediction is a median, so a rider who trusts it misses a third of the buses. */
+export function BeBy({ at, now }: { at: number; now: number }) {
+  return <span className="be-by">{at - now < 30 ? 'Be there now' : `Be there by ${shortClock(at)}`}</span>
+}
+
 export function Times({ ours, metro, scheduled }: { ours: number | null; metro: number | null; scheduled: number | null }) {
   const label = [
     ours != null && `Ours ${clock(ours)}`,

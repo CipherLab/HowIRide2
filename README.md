@@ -114,6 +114,17 @@ Most of the error on a trip that hasn't started is the guess of when it will, so
 
 Only crossings knowable at the query time count as seen; a replay's store also holds later ones.
 
+### Be there by
+
+An estimate is a best guess, so about a third of buses leave before it.
+Departures also show a time to be at the stop by, the estimate less a margin learned from `derived/live-predictions`: what riders were shown against what the bus then did, from the last 7 days.
+
+- **By** whether the trip had started and the time shown. Bus-gone-first risk is 5% in each cell.
+- **Routes** with enough samples can raise their margin but never lower it, because one good day isn't evidence a route is safer than the rest. So overall risk runs below 5%, at about 3%.
+- **Risk here is strict:** the bus had left at all, with no minute's grace. Views after it had already gone don't count; nobody could have caught it.
+
+The nightly run prints how yesterday's margins did on the day before relearning them, to `journalctl -u transit-backtest.service`, and saves `derived/be-by-margins.json`. The API reloads it hourly and offers no time until it exists.
+
 ### Nightly scoring
 
 `deploy/transit-backtest.timer` scores yesterday at 04:30 and appends to `derived/backtest.db`, which feeds the Charts tab.

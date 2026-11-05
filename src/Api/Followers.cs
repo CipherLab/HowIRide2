@@ -76,6 +76,10 @@ public sealed class ModelRefresher(LiveState state, ApiOptions options, TimeProv
                 var stats = SegmentStats.Build(history, new ServiceCalendar(state.Zone), (_, end) => end < now,
                     scheduledStart: SegmentStats.ScheduledStarts(state.ResolveTrip, state.Zone));
                 state.SetStats(stats);
+                var margins = BeByMargins.TryLoad(options.BeByMarginsPath);
+                state.SetMargins(margins);
+                if (margins is null) log.LogInformation("No be-there-by margins yet; the app won't offer that time");
+                else log.LogInformation("Be-there-by margins from {From}-{To}, {Samples:N0} views", margins.From, margins.To, margins.Samples);
                 log.LogInformation("Model tables rebuilt: {Segments:N0} segments, {Stops:N0} stops from {Trips:N0} trips",
                     stats.TravelTable.Keys, stats.DwellTable.Keys, history.Trips);
             }

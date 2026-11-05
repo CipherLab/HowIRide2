@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { Component, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api } from './api'
 import { RouteBadge } from './components'
 import { LiveVehicles } from './live'
@@ -24,6 +24,24 @@ function loadCollapsed() {
 function fromHash(): Selection {
   const [kind, id] = location.hash.slice(1).split('/')
   return (kind === 'stop' || kind === 'vehicle') && id ? { kind, id: decodeURIComponent(id) } : null
+}
+
+/** Without WebGL the map throws as it starts. That shouldn't take the panel down with it, since most of the panel doesn't need a map. */
+class MapBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div className="map map-failed" role="status">
+        <p>The map can't start here because this browser has WebGL turned off. Everything in the panel still works.</p>
+      </div>
+    )
+  }
 }
 
 export default function App() {
@@ -76,7 +94,9 @@ export default function App() {
 
   return (
     <div className="app">
-      <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} />
+      <MapBoundary>
+        <MapView live={live} selection={selection} onSelect={select} follow={following} onFollowChange={setFollow} />
+      </MapBoundary>
       {collapsed ? (
         <nav className="rail" aria-label="Details panel, hidden">
           <button className="rail-open" onClick={() => setCollapsed(false)} aria-label="Show panel" title="Show panel">

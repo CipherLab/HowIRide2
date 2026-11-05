@@ -64,6 +64,7 @@ export interface StopTime {
   metro: number | null
   v0: number | null
   v1: number | null
+  beBy: number | null
 }
 
 export interface Departure {
@@ -78,6 +79,8 @@ export interface Departure {
   metro: number | null
   v0: number | null
   v1: number | null
+  /** When to be at the stop so that about 19 buses in 20 are still to come, though less on some routes. */
+  beBy: number | null
 }
 
 export interface Score {

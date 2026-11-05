@@ -18,6 +18,7 @@ const string Usage = """
       --learning-curve     also score v1 with history tables from 25% and 50% of the training trips
       --corrections        also fit and score the +cap and metro+median corrections; predicts every training day, so it's slow
       --live-log <dir>     also score what the live API predicted, from its log (see LivePredictionLog)
+      --fit-margins <path> with --live-log, relearn the "be there by" margins from the last 7 days of that log
       --checkpoint-report  just print how many road segments each checkpoint layout shares between routes
     """;
 
@@ -267,6 +268,38 @@ foreach (var group in new[] { "all", "rail", "bus" })
 
 store.SaveScores(now, splitAt?.ToString("O") ?? testFrom, testTo, scores);
 Console.WriteLine($"\nscores saved to {storePath}");
+
+if (opts.GetValueOrDefault("fit-margins") is { } marginsPath && opts.GetValueOrDefault("live-log") is { } marginLog && Directory.Exists(marginLog))
+{
+    // Before refitting, a fair test: how the margins riders were shown yesterday did on a day they hadn't seen.
+    var shown = BeByMargins.TryLoad(marginsPath);
+    var (views, missed) = (new Dictionary<string, long>(), new Dictionary<string, long>());
+    var (notStartedViews, notStartedMissed, onTripViews, onTripMissed) = (0L, 0L, 0L, 0L);
+    var histogram = new BeByHistogram();
+    var lastDay = DateTime.ParseExact(testTo, "yyyyMMdd", CultureInfo.InvariantCulture);
+    var marginDays = Enumerable.Range(0, 7).Select(i => lastDay.AddDays(-i).ToString("yyyyMMdd")).ToList();
+    foreach (var day in marginDays)
+        BeByFit.VisitDay(dbPath, marginLog, day, (route, onTrip, lead, residual) =>
+        {
+            histogram.Add(route, onTrip, lead, residual);
+            if (day != testTo || shown is null) return;
+            var miss = residual < -shown.Margin(route, onTrip, lead) ? 1 : 0;
+            views[route] = views.GetValueOrDefault(route) + 1;
+            missed[route] = missed.GetValueOrDefault(route) + miss;
+            if (onTrip) { onTripViews++; onTripMissed += miss; }
+            else { notStartedViews++; notStartedMissed += miss; }
+        });
+    if (onTripViews + notStartedViews > 0)
+    {
+        var busy = views.Where(kv => kv.Value >= 400).ToList();
+        Console.WriteLine($"\nbe-there-by on {testTo}, with margins from {shown!.From}-{shown.To}: bus gone first for {100.0 * (onTripMissed + notStartedMissed) / (onTripViews + notStartedViews):F1}% of views " +
+            $"(on trip {100.0 * onTripMissed / Math.Max(1, onTripViews):F1}%, not started {100.0 * notStartedMissed / Math.Max(1, notStartedViews):F1}%); " +
+            $"over 12% on {busy.Count(kv => missed[kv.Key] > 0.12 * kv.Value)} of {busy.Count} routes");
+    }
+    var fitted = histogram.Fit(marginDays[^1], testTo);
+    fitted.Save(marginsPath);
+    Console.WriteLine($"be-there-by margins relearned from {fitted.Samples:N0} views, saved to {marginsPath} ({clock.Elapsed.TotalSeconds:F0}s)");
+}
 
 if (opts.GetValueOrDefault("routes-csv") is { } csvPath)
 {
