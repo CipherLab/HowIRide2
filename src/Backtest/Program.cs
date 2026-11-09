@@ -161,7 +161,10 @@ if (opts.GetValueOrDefault("live-log") is { } liveLog && Directory.Exists(liveLo
 
 // v0/v1: medians learned only from crossings that ended before the test window; live state from anything knowable at query time.
 var history = CrossingHistory.Load(dbPath, trainFrom, testTo);
-var calendar = new ServiceCalendar(zone);
+var dayOverrides = ServiceDays.FromArchives(Path.Combine(dataDir, "static", "metro-gtfs"), Path.Combine(dataDir, "static", "metro-gtfs-next"));
+var calendar = new ServiceCalendar(zone, dayOverrides);
+if (dayOverrides.Where(kv => string.CompareOrdinal(kv.Key, trainFrom) >= 0 && string.CompareOrdinal(kv.Key, testTo) <= 0).ToList() is { Count: > 0 } special)
+    Console.WriteLine($"  running as another day type: {string.Join(", ", special.Select(kv => $"{kv.Key} {kv.Value}"))}");
 bool InTraining(string serviceDate, double endUnix) =>
     splitAt is { } cut ? endUnix < cut.ToUnixTimeSeconds() : string.CompareOrdinal(serviceDate, testFrom) < 0;
 var scheduledStarts = SegmentStats.ScheduledStarts(id => feeds.Resolve(id)?.Trip, zone);
@@ -185,6 +188,19 @@ if (stats.TravelTable.Keys > 0)
     {
         var meanStats = SegmentStats.Build(history, calendar, InTraining, trim: 0.1, scheduledStart: scheduledStarts);
         var model = new SegmentEtaPredictor("v1-mean", meanStats, RecentPace.Build(history, meanStats), history, Resolve, zone) { UseBlocks = true };
+        var table = new PredictionTable(targets.Count);
+        model.Fill(targets, table);
+        tables.Add((model.Name, table));
+        Console.WriteLine($"  scored {model.Name} ({clock.Elapsed.TotalSeconds:F0}s)");
+    }
+
+    // Weekend fallbacks: sparse Saturday or Sunday cells borrow the other weekend day, then (v1-wkday) weekdays, before
+    // the whole day. They only differ from v1-pace on days that run as a weekend, so other days skip them.
+    var weekendTest = test.Any(i => calendar.DayTypeOf(targets[i].ServiceDate) != DayType.Weekday);
+    foreach (var (variant, fallback) in weekendTest ? new[] { ("v1-wkpool", WeekendFallback.PoolWeekend), ("v1-wkday", WeekendFallback.PoolWeekendThenWeekday) } : [])
+    {
+        var variantStats = SegmentStats.Build(history, calendar, InTraining, scheduledStart: scheduledStarts, weekend: fallback);
+        var model = new SegmentEtaPredictor(variant, variantStats, RecentPace.Build(history, variantStats), history, Resolve, zone) { UseBlocks = true };
         var table = new PredictionTable(targets.Count);
         model.Fill(targets, table);
         tables.Add((model.Name, table));

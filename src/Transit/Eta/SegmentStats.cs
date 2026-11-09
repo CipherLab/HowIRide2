@@ -5,13 +5,21 @@ namespace Transit.Eta;
 public enum DayType { Weekday, Saturday, Sunday }
 
 /// <summary>Calendar helpers in the agency's time zone.</summary>
-public sealed class ServiceCalendar(TimeZoneInfo zone)
+/// <param name="overrides">
+/// Service dates that run as another day type, such as a holiday on Sunday service (see <c>Gtfs.ServiceDays</c>).
+/// Without them every date is its weekday.
+/// </param>
+public sealed class ServiceCalendar(TimeZoneInfo zone, IReadOnlyDictionary<string, DayType>? overrides = null)
 {
     public const int SlotMinutes = 15;
     public const int SlotsPerDay = 24 * 60 / SlotMinutes;
 
-    /// <summary>Holidays are not distinguished yet; they fall under their weekday.</summary>
-    public static DayType DayTypeOf(string serviceDate) =>
+    /// <summary>The day type a service date's timetable runs as.</summary>
+    public DayType DayTypeOf(string serviceDate) =>
+        overrides is not null && overrides.TryGetValue(serviceDate, out var type) ? type : ByWeekday(serviceDate);
+
+    /// <summary>The day type from the weekday alone.</summary>
+    public static DayType ByWeekday(string serviceDate) =>
         DateTime.ParseExact(serviceDate, "yyyyMMdd", CultureInfo.InvariantCulture).DayOfWeek switch
         {
             DayOfWeek.Saturday => DayType.Saturday,
@@ -27,6 +35,17 @@ public sealed class ServiceCalendar(TimeZoneInfo zone)
     }
 }
 
+/// <summary>How a sparse Saturday or Sunday cell borrows from other days before giving up on time of day.</summary>
+public enum WeekendFallback
+{
+    /// <summary>Nearby slots of the same day type, then that day type's whole day, then all days.</summary>
+    None,
+    /// <summary>At each slot distance, Saturday and Sunday pooled after the day's own cell.</summary>
+    PoolWeekend,
+    /// <summary>As <see cref="PoolWeekend"/>, then the weekday cell near the same time of day.</summary>
+    PoolWeekendThenWeekday,
+}
+
 /// <summary>
 /// Historical medians per key (a segment, or a stop for dwell) by day type and 15-minute slot: the v0 lookup table.
 /// Sparse cells fall back to nearby slots, then the whole day type, then all days.
@@ -35,7 +54,7 @@ public sealed class ServiceCalendar(TimeZoneInfo zone)
 /// When set, each cell holds a mean with this share cut from each end instead of a median. Medians don't add up:
 /// summed over many short segments they drop each one's occasional slow run, so long trips come out short. Means add.
 /// </param>
-public sealed class SlotMedians(double? trim = null)
+public sealed class SlotMedians(double? trim = null, WeekendFallback weekend = WeekendFallback.None)
 {
     /// <summary>Samples a cell needs before its median is trusted.</summary>
     public const int MinSamples = 3;
@@ -49,6 +68,8 @@ public sealed class SlotMedians(double? trim = null)
     {
         public readonly Dictionary<int, List<double>> Raw = [];
         public readonly Dictionary<int, (double Median, int N)> Cells = [];
+        /// <summary>Saturday and Sunday together, by slot.</summary>
+        public readonly Dictionary<int, (double Median, int N)> WeekendCells = [];
         public readonly (double Median, int N)[] ByDayType = new (double, int)[3];
         public (double Median, int N) All;
     }
@@ -72,6 +93,12 @@ public sealed class SlotMedians(double? trim = null)
         {
             foreach (var (cell, values) in p.Raw)
                 p.Cells[cell] = (Typical(values), values.Count);
+            if (weekend != WeekendFallback.None)
+                foreach (var g in p.Raw.Where(kv => kv.Key >= ServiceCalendar.SlotsPerDay).GroupBy(kv => kv.Key % ServiceCalendar.SlotsPerDay))
+                {
+                    var pooled = g.SelectMany(kv => kv.Value).ToList();
+                    p.WeekendCells[g.Key] = (Typical(pooled), pooled.Count);
+                }
             for (var d = 0; d < 3; d++)
             {
                 var day = p.Raw.Where(kv => kv.Key / ServiceCalendar.SlotsPerDay == d).SelectMany(kv => kv.Value).ToList();
@@ -88,18 +115,29 @@ public sealed class SlotMedians(double? trim = null)
     {
         if (!_profiles.TryGetValue(key, out var p)) return null;
         var baseCell = (int)dayType * ServiceCalendar.SlotsPerDay;
+        var isWeekend = dayType != DayType.Weekday && weekend != WeekendFallback.None;
         for (var distance = 0; distance <= MaxSlotDistance; distance++)
         {
             foreach (var s in distance == 0 ? [slot] : new[] { slot - distance, slot + distance })
             {
                 if (s < 0 || s >= ServiceCalendar.SlotsPerDay) continue;
-                if (p.Cells.TryGetValue(baseCell + s, out var c) && c.N >= MinSamples)
-                    return c.Median;
+                if (p.Cells.TryGetValue(baseCell + s, out var c) && c.N >= MinSamples) return c.Median;
+                if (isWeekend && p.WeekendCells.TryGetValue(s, out var w) && w.N >= MinSamples) return w.Median;
             }
         }
+        if (isWeekend && weekend == WeekendFallback.PoolWeekendThenWeekday && NearestCell(p, 0, slot) is { } weekday) return weekday;
         var byDay = p.ByDayType[(int)dayType];
         if (byDay.N >= MinSamples) return byDay.Median;
         return p.All.N > 0 ? p.All.Median : null;
+    }
+
+    static double? NearestCell(Profile p, int baseCell, int slot)
+    {
+        for (var distance = 0; distance <= MaxSlotDistance; distance++)
+            foreach (var s in distance == 0 ? [slot] : new[] { slot - distance, slot + distance })
+                if (s >= 0 && s < ServiceCalendar.SlotsPerDay && p.Cells.TryGetValue(baseCell + s, out var c) && c.N >= MinSamples)
+                    return c.Median;
+        return null;
     }
 
     double Typical(List<double> values)
@@ -138,23 +176,23 @@ public sealed class SegmentStats(SlotMedians travel, SlotMedians dwell, ServiceC
 
     /// <summary>Learns from history the caller has judged to be in the past (the training window).</summary>
     public static SegmentStats Build(CrossingHistory history, ServiceCalendar calendar, Func<string, double, bool> include, double? trim = null,
-        Func<string, string, double?>? scheduledStart = null)
+        Func<string, string, double?>? scheduledStart = null, WeekendFallback weekend = WeekendFallback.None)
     {
-        var travel = new SlotMedians(trim);
+        var travel = new SlotMedians(trim, weekend);
         foreach (var o in history.Segments())
             if (include(o.ServiceDate, o.End))
-                travel.Add(o.Segment, ServiceCalendar.DayTypeOf(o.ServiceDate), calendar.SlotOf(o.Start), o.Travel);
-        var dwell = new SlotMedians(trim);
+                travel.Add(o.Segment, calendar.DayTypeOf(o.ServiceDate), calendar.SlotOf(o.Start), o.Travel);
+        var dwell = new SlotMedians(trim, weekend);
         foreach (var (cp, date, arrive, seconds) in history.Dwells())
             if (include(date, arrive + seconds))
-                dwell.Add(cp, ServiceCalendar.DayTypeOf(date), calendar.SlotOf(arrive), seconds);
+                dwell.Add(cp, calendar.DayTypeOf(date), calendar.SlotOf(arrive), seconds);
         SlotMedians? startDelays = null;
         if (scheduledStart is not null)
         {
-            startDelays = new SlotMedians(trim);
+            startDelays = new SlotMedians(trim, weekend);
             foreach (var (cp, date, trip, depart) in history.Starts())
                 if (include(date, depart) && scheduledStart(date, trip) is { } scheduled && Math.Abs(depart - scheduled) <= MaxStartDelaySeconds)
-                    startDelays.Add(cp, ServiceCalendar.DayTypeOf(date), calendar.SlotOf(scheduled), depart - scheduled);
+                    startDelays.Add(cp, calendar.DayTypeOf(date), calendar.SlotOf(scheduled), depart - scheduled);
             startDelays.Build();
         }
         return new SegmentStats(travel.Build(), dwell.Build(), calendar, startDelays);

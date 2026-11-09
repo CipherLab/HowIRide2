@@ -69,7 +69,7 @@ public static class LivePredictionSampler
             if (resolve(tripId) is not { } trip) continue;
             if (!origins.TryGetValue(date, out var origin))
                 origins[date] = origin = StaticFeed.ServiceDayOrigin(date, zone).ToUnixTimeSeconds();
-            var stops = model.PredictAlong(trip, rowsOf(date, tripId), ServiceCalendar.DayTypeOf(date), origin, now, id => rowsOf(date, id), now + windowSeconds);
+            var stops = model.PredictAlong(trip, rowsOf(date, tripId), model.Calendar.DayTypeOf(date), origin, now, id => rowsOf(date, id), now + windowSeconds);
             if (stops.Count > 0)
                 result.Add(new LiveTripPrediction(date, tripId, stops.Select(s => (s.StopSequence, (int)Math.Round(s.Depart))).ToArray()));
         }

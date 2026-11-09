@@ -29,6 +29,9 @@ public sealed class SegmentEtaPredictor(
 
     public string Name => name;
 
+    /// <summary>Which day type each service date runs as.</summary>
+    public ServiceCalendar Calendar => stats.Calendar;
+
     public void Fill(IReadOnlyList<BacktestTarget> targets, PredictionTable table)
     {
         var origins = new Dictionary<string, double>();
@@ -43,7 +46,7 @@ public sealed class SegmentEtaPredictor(
             if (!origins.TryGetValue(t.ServiceDate, out var origin))
                 origins[t.ServiceDate] = origin = StaticFeed.ServiceDayOrigin(t.ServiceDate, zone).ToUnixTimeSeconds();
             var rows = history.Trip(t.ServiceDate, t.TripId);
-            var dayType = ServiceCalendar.DayTypeOf(t.ServiceDate);
+            var dayType = stats.Calendar.DayTypeOf(t.ServiceDate);
             var actual = t.Actual.ToUnixTimeMilliseconds() / 1000.0;
             for (var h = 0; h < Horizons.Minutes.Length; h++)
                 if (Predict(trip, target, rows, dayType, origin, actual - Horizons.Minutes[h] * 60, id => history.Trip(t.ServiceDate, id)) is { } p)

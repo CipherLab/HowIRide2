@@ -314,7 +314,7 @@ They start at the bus's last known departure and add, for each segment still ahe
 - **`v0-medians`** uses historical medians by segment, day type and 15-minute slot.
   A sparse cell falls back to nearby slots, then the whole day type, then all days.
   A segment with no history at all assumes 7 m/s and 8 s of dwell.
-  Holidays aren't distinguished yet and count as their weekday.
+  A date's day type is what its timetable runs as, not just its weekday: [`ServiceDays`](src/Transit/Gtfs/ServiceDays.cs) compares the trips each archived GTFS feed runs that date with its usual Saturday, Sunday and own-weekday timetables, so Thanksgiving on Sunday service learns from and predicts with Sundays.
 - **`v1-pace`** scales those medians by [today's pace](src/Transit/Eta/RecentPace.cs): how traversals finished in the last 30 minutes compare with their own medians, on that segment and its neighbours within 1.5 km.
   Snow, a crash or a game letting out show up here without being modeled.
   With little evidence it assumes a normal day, and the effect fades with distance ahead of the bus.
@@ -382,7 +382,7 @@ dotnet run --project src/Backtest -c Release -- --data <data-dir> --db <crossing
 
 - **Target is departure**, because that's what Metro Transit's TripUpdates publish (arrival times appear on ~2% of stop updates) and what a rider boards on. First and last stops and detoured crossings are excluded.
 - **Only the latest snapshot counts.** At each horizon a predictor's answer is what the newest TripUpdates snapshot said; if the trip had dropped out of it, there is no prediction. A latest snapshot more than 60 s old is treated as an archive gap.
-- **Contenders:** the printed `schedule`, `metro-tripupdates`, `v0-medians`, `v1-pace`, and `live-v1` with `--live-log`. New models implement `IPredictor` and are scored the same way.
+- **Contenders:** the printed `schedule`, `metro-tripupdates`, `v0-medians`, `v1-pace`, `v1-mean` (v1 on trimmed means), and `live-v1` with `--live-log`. On days that run as a weekend, also `v1-wkpool`, where a sparse Saturday or Sunday cell borrows the other weekend day's cell at that time before the whole day, and `v1-wkday`, which then tries weekdays at that time. New models implement `IPredictor` and are scored the same way.
 - **Metrics:** coverage, median and p90 absolute error, bias (mean of predicted minus actual), share within ±1 and ±2 minutes, and the *early* rate: the bus left more than 60 s before the predicted time.
 
 ### Nightly scoring

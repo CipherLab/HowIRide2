@@ -73,7 +73,7 @@ public sealed class ModelRefresher(LiveState state, ApiOptions options, TimeProv
                 var history = await Task.Run(() => CrossingHistory.Load(options.DbPath,
                     today.AddDays(-options.HistoryDays).ToString("yyyyMMdd"), today.ToString("yyyyMMdd")), stoppingToken);
                 var now = clock.GetUtcNow().ToUnixTimeSeconds();
-                var stats = SegmentStats.Build(history, new ServiceCalendar(state.Zone), (_, end) => end < now,
+                var stats = SegmentStats.Build(history, new ServiceCalendar(state.Zone, state.ServiceDayOverrides()), (_, end) => end < now,
                     scheduledStart: SegmentStats.ScheduledStarts(state.ResolveTrip, state.Zone));
                 state.SetStats(stats);
                 var margins = BeByMargins.TryLoad(options.BeByMarginsPath);

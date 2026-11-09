@@ -90,6 +90,10 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
     public TimeZoneInfo Zone => _feeds.Feeds[0].TimeZone;
     public TripInfo? ResolveTrip(string tripId) => _feeds.Resolve(tripId)?.Trip;
 
+    /// <summary>Dates every archived timetable says run as another day type, such as a holiday on Sunday service.</summary>
+    public IReadOnlyDictionary<string, DayType> ServiceDayOverrides() => ServiceDays.FromArchives(
+        Path.Combine(options.DataDir, "static", "metro-gtfs"), Path.Combine(options.DataDir, "static", "metro-gtfs-next"));
+
     public void LoadStatic()
     {
         _feeds.Refresh();
@@ -413,7 +417,7 @@ public sealed class LiveState(ApiOptions options, TimeProvider clock, ILogger<Li
         if (_stats is not null)
         {
             var rows = _recent.GetValueOrDefault((serviceDate, trip.TripId)) ?? [];
-            var dayType = ServiceCalendar.DayTypeOf(serviceDate);
+            var dayType = _stats.Calendar.DayTypeOf(serviceDate);
             var now = Now();
             var empty = CrossingHistory.From([]);
             TripInfo? Resolve(string id) => _feeds.Resolve(id)?.Trip;

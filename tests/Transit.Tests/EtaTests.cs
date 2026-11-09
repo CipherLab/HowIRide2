@@ -31,6 +31,31 @@ public sealed class EtaTests : IDisposable
     }
 
     [Fact]
+    public void SparseWeekendCellsBorrowTheOtherWeekendDayThenWeekdaysBeforeTheWholeDay()
+    {
+        SlotMedians Table(WeekendFallback fallback)
+        {
+            var m = new SlotMedians(weekend: fallback);
+            foreach (var v in new[] { 10.0, 20, 30 }) m.Add("seg", DayType.Weekday, 40, v);  // 10:00
+            foreach (var v in new[] { 80.0, 90, 100 }) m.Add("seg", DayType.Weekday, 68, v); // 17:00
+            m.Add("seg", DayType.Saturday, 40, 50);
+            m.Add("seg", DayType.Sunday, 40, 60);
+            m.Add("seg", DayType.Sunday, 40, 70);
+            foreach (var v in new[] { 300.0, 400, 500 }) m.Add("seg", DayType.Sunday, 4, v);  // 01:00
+            return m.Build();
+        }
+
+        Assert.Equal(300, Table(WeekendFallback.None).Get("seg", DayType.Sunday, 40));            // Sunday's whole day, night runs included
+        Assert.Equal(60, Table(WeekendFallback.PoolWeekend).Get("seg", DayType.Sunday, 40));     // Saturday and Sunday at 10:00
+        Assert.Equal(60, Table(WeekendFallback.PoolWeekend).Get("seg", DayType.Saturday, 40));
+        Assert.Equal(400, Table(WeekendFallback.PoolWeekend).Get("seg", DayType.Sunday, 4));     // a full cell is used as is
+        Assert.Equal(20, Table(WeekendFallback.PoolWeekend).Get("seg", DayType.Weekday, 40));    // weekdays never borrow
+        Assert.Equal(60, Table(WeekendFallback.PoolWeekendThenWeekday).Get("seg", DayType.Saturday, 44)); // 11:00: the weekend at 10:00 is near enough
+        Assert.Equal(90, Table(WeekendFallback.PoolWeekendThenWeekday).Get("seg", DayType.Saturday, 70)); // 17:30: no weekend nearby, weekday at 17:00
+        Assert.Equal(75, Table(WeekendFallback.PoolWeekend).Get("seg", DayType.Saturday, 70));  // one Saturday sample: all days
+    }
+
+    [Fact]
     public void TrimmedMeansKeepTheSlowRunsAMedianIgnoresButNotTheWorstOne()
     {
         var m = new SlotMedians(trim: 0.1);

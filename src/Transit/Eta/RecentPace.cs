@@ -29,7 +29,7 @@ public sealed class RecentPace
 
     public static RecentPace Build(CrossingHistory history, SegmentStats stats) =>
         new(history.Segments()
-            .Select(o => (o, expected: stats.Travel(o.Segment, ServiceCalendar.DayTypeOf(o.ServiceDate), o.Start)))
+            .Select(o => (o, expected: stats.Travel(o.Segment, stats.Calendar.DayTypeOf(o.ServiceDate), o.Start)))
             .Where(x => x.expected is > 1)
             .GroupBy(x => x.o.Segment)
             .ToDictionary(g => g.Key, g => g
